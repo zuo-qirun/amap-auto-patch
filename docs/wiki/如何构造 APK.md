@@ -26,6 +26,7 @@ SHA-256 不匹配会直接停止，避免把错误版本打坏。
 
 ```text
 runtime/src/main/java
+companion/src/main/java
 ```
 
 流程：
@@ -37,19 +38,23 @@ runtime/src/main/java
 这个 runtime 包含：
 
 - `PatchRuntime`
-- `OverlayController`
-- `DataModel`
-- `PatchTestActivity`
+- `PatchBridge`
+- `MainActivity`
+- `DiagnosticActivity`
+- `OverlayService`
+- companion 的解析、插件、诊断和广播回放类
 
 ## 反编译原 APK
 
 真实构建使用：
 
 ```powershell
-java -jar tools\apktool.jar d -f -r -o decoded input.apk
+java -jar tools\apktool.jar d -f -o decoded input.apk
 ```
 
-`-r` 表示保留资源，不重解 `res/`。本项目只改 smali/dex，这样可以减少资源回编失败概率。
+当前整合 companion 需要合并布局、图标和样式资源，因此真实构建会完整解码资源。脚本会把 `companion/src/main/res` 合入 decoded `res/`，并把 `AppTheme`、`ClusterPresentationTheme` 合入 `res/values/styles.xml`。
+
+apktool 对当前高德 APK 的部分动画资源会解成 `false` 占位。脚本会删除这些无效 item，并生成最小空动画 XML，避免 aapt2 回编时报 `invalid value for type 'anim'`。
 
 ## 应用 smali 补丁
 
@@ -79,15 +84,30 @@ profile 中的关键字段：
 
 ```text
 runtime-decoded/smali/amap/auto/patch/...
+runtime-decoded/smali/com/autonavi/companion/...
 ```
 
 然后复制到原 APK 解包目录：
 
 ```text
 decoded/smali/amap/auto/patch/...
+decoded/smali/com/autonavi/companion/...
 ```
 
 最终 apktool 回编时，这些类会进入原 `classes.dex`。
+
+如果 D8 生成了 `com/android/tools/r8/annotations/LambdaMethod` 等辅助注解类，脚本也会一并复制，避免 companion lambda smali 引用缺类。
+
+## 注入 Manifest
+
+脚本会向原 Manifest 增加 companion 组件：
+
+- `com.autonavi.companion.MainActivity`，导出并带 `MAIN` + `LAUNCHER`，桌面名称为 `AMap Companion`。
+- `com.autonavi.companion.DiagnosticActivity`，仅内部使用。
+- `com.autonavi.companion.OverlayService`，前台服务。
+- `com.autonavi.companion.BootReceiver`，接收开机、替换安装、亮屏等事件。
+
+脚本还会补充 `QUERY_ALL_PACKAGES`、`MANAGE_EXTERNAL_STORAGE`、`READ_LOGS`，用于兼容诊断、日志和插件文件访问。
 
 ## native 库压缩处理
 

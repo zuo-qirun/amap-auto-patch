@@ -159,8 +159,9 @@ function Apply-ReplacePatch($decodedDir, $patch, $label) {
     Write-Host "[patch] applied $label"
 }
 
-function Build-RuntimeDex($root, $tools, $profileConfig, $outDexPath, $runtimeBuild) {
+function Build-RuntimeDex($root, $tools, $profileConfig, $outDexPath, $runtimeBuild, $decodedDir) {
     $runtimeSrc = Join-Path $root "runtime\src\main\java"
+    $companionSrc = Join-Path $root "companion\src\main\java"
     $classesDir = Join-Path $runtimeBuild "classes"
     $dexDir = Join-Path $runtimeBuild "dex"
     $runtimeParent = Split-Path -Parent $runtimeBuild
@@ -168,8 +169,13 @@ function Build-RuntimeDex($root, $tools, $profileConfig, $outDexPath, $runtimeBu
     Reset-Directory $runtimeBuild $runtimeParent
     New-Item -ItemType Directory -Force -Path $classesDir, $dexDir | Out-Null
 
-    $sources = Get-ChildItem -LiteralPath $runtimeSrc -Recurse -File -Filter *.java |
+    $sources = @()
+    $sources += Get-ChildItem -LiteralPath $runtimeSrc -Recurse -File -Filter *.java |
         ForEach-Object { $_.FullName }
+    if (Test-Path -LiteralPath $companionSrc) {
+        $sources += Get-ChildItem -LiteralPath $companionSrc -Recurse -File -Filter *.java |
+            ForEach-Object { $_.FullName }
+    }
     if (!$sources) {
         throw "No runtime Java sources found under $runtimeSrc"
     }
@@ -177,9 +183,15 @@ function Build-RuntimeDex($root, $tools, $profileConfig, $outDexPath, $runtimeBu
     javac -encoding UTF-8 -source 8 -target 8 -classpath $tools.androidJar -d $classesDir $sources
     Check-Last "javac runtime"
 
-    $classFiles = Get-ChildItem -LiteralPath $classesDir -Recurse -File -Filter *.class |
-        ForEach-Object { $_.FullName }
-    & $tools.d8 --lib $tools.androidJar --min-api ([int]$profileConfig.minApi) --output $dexDir $classFiles
+    $classesJar = Join-Path $runtimeBuild "runtime-classes.jar"
+    Push-Location $classesDir
+    try {
+        jar cf $classesJar .
+        Check-Last "jar runtime classes"
+    } finally {
+        Pop-Location
+    }
+    & $tools.d8 --lib $tools.androidJar --min-api ([int]$profileConfig.minApi) --output $dexDir $classesJar
     Check-Last "d8 runtime"
 
     $dex = Join-Path $dexDir "classes.dex"
@@ -243,6 +255,147 @@ function Enable-NativeLibCompression($decodedDir) {
     }
 }
 
+function Add-UsesPermissionIfMissing($manifestText, $permissionName) {
+    if ($manifestText.Contains("android:name=`"$permissionName`"")) {
+        return $manifestText
+    }
+    $line = "    <uses-permission android:name=`"$permissionName`"/>"
+    return $manifestText -replace '(<application\b)', ($line + "`r`n`$1")
+}
+
+function Merge-CompanionStyles($decodedDir, $companionRes) {
+    $source = Join-Path $companionRes "values\styles.xml"
+    if (!(Test-Path -LiteralPath $source)) {
+        return
+    }
+    $target = Join-Path $decodedDir "res\values\styles.xml"
+    $targetText = Read-Text $target
+    if (!$targetText.Contains('name="AppTheme"')) {
+        $targetText = $targetText -replace '</resources>', @'
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:colorAccent">#1677FF</item>
+    </style>
+
+</resources>
+'@
+    }
+    if (!$targetText.Contains('name="ClusterPresentationTheme"')) {
+        $targetText = $targetText -replace '</resources>', @'
+    <style name="ClusterPresentationTheme" parent="@android:style/Theme.Translucent.NoTitleBar.Fullscreen">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
+</resources>
+'@
+    }
+    Write-Text $target $targetText
+}
+
+function Copy-CompanionResources($root, $decodedDir) {
+    $companionRes = Join-Path $root "companion\src\main\res"
+    if (!(Test-Path -LiteralPath $companionRes)) {
+        Write-Host "[patch] companion resources not found, skip"
+        return
+    }
+    Merge-CompanionStyles $decodedDir $companionRes
+    $decodedRes = Join-Path $decodedDir "res"
+    $files = Get-ChildItem -LiteralPath $companionRes -Recurse -File |
+        Where-Object { $_.FullName -notlike "*\values\styles.xml" }
+    foreach ($file in $files) {
+        $relative = $file.FullName.Substring($companionRes.Length + 1)
+        $target = Join-Path $decodedRes $relative
+        if (Test-Path -LiteralPath $target) {
+            $sourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash
+            $targetHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $target).Hash
+            if ($sourceHash -ne $targetHash) {
+                throw "Companion resource collision: $relative"
+            }
+            continue
+        }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+        Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+    }
+    Write-Host "[patch] merged companion resources"
+}
+
+function Repair-InvalidDecodedAnimations($decodedDir) {
+    $animsValues = Join-Path $decodedDir "res\values\anims.xml"
+    if (!(Test-Path -LiteralPath $animsValues)) {
+        return
+    }
+    $content = Read-Text $animsValues
+    $invalidNames = [System.Collections.Generic.List[string]]::new()
+    foreach ($match in [regex]::Matches($content, '<item\s+type="anim"\s+name="([^"]+)">\s*false\s*</item>')) {
+        $invalidNames.Add($match.Groups[1].Value)
+    }
+    if ($invalidNames.Count -eq 0) {
+        return
+    }
+    $content = [regex]::Replace($content, '\s*<item\s+type="anim"\s+name="[^"]+">\s*false\s*</item>', '')
+    Write-Text $animsValues $content
+
+    $animDir = Join-Path $decodedDir "res\anim"
+    New-Item -ItemType Directory -Force -Path $animDir | Out-Null
+    $placeholder = @'
+<?xml version="1.0" encoding="utf-8"?>
+<alpha xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="0"
+    android:fromAlpha="1.0"
+    android:toAlpha="1.0" />
+'@
+    foreach ($name in $invalidNames) {
+        $target = Join-Path $animDir "$name.xml"
+        if (!(Test-Path -LiteralPath $target)) {
+            Write-Text $target $placeholder
+        }
+    }
+    Write-Host "[patch] repaired $($invalidNames.Count) invalid decoded animation placeholders"
+}
+
+function Inject-CompanionManifest($decodedDir) {
+    $manifestPath = Join-Path $decodedDir "AndroidManifest.xml"
+    if (!(Test-Path -LiteralPath $manifestPath)) {
+        throw "AndroidManifest.xml not found: $manifestPath"
+    }
+    $text = Read-Text $manifestPath
+    foreach ($permission in @(
+        "android.permission.QUERY_ALL_PACKAGES",
+        "android.permission.MANAGE_EXTERNAL_STORAGE",
+        "android.permission.READ_LOGS"
+    )) {
+        $text = Add-UsesPermissionIfMissing $text $permission
+    }
+    if (!$text.Contains('com.autonavi.companion.MainActivity')) {
+        $components = @'
+        <activity android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode" android:exported="false" android:name="com.autonavi.companion.DiagnosticActivity" android:theme="@style/AppTheme"/>
+        <activity android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode" android:exported="true" android:label="AMap Companion" android:launchMode="singleTop" android:name="com.autonavi.companion.MainActivity" android:theme="@style/AppTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <service android:exported="false" android:foregroundServiceType="location" android:name="com.autonavi.companion.OverlayService"/>
+        <receiver android:enabled="true" android:exported="false" android:name="com.autonavi.companion.BootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.SCREEN_ON"/>
+                <action android:name="android.intent.action.USER_PRESENT"/>
+            </intent-filter>
+        </receiver>
+'@
+        $text = $text -replace '(<application\b[^>]*>)', "`$1`r`n$components"
+    }
+    Write-Text $manifestPath $text
+    Write-Host "[patch] injected companion manifest entries"
+}
+
 function Merge-RuntimeSmali($apktoolJar, $runtimeDex, $decodedDir, $workRoot) {
     $runtimeApk = Join-Path $workRoot "runtime-classes.apk"
     $runtimeDecoded = Join-Path $workRoot "runtime-decoded"
@@ -253,16 +406,18 @@ function Merge-RuntimeSmali($apktoolJar, $runtimeDex, $decodedDir, $workRoot) {
     java -jar $apktoolJar d -f -r -o $runtimeDecoded $runtimeApk
     Check-Last "apktool decode runtime dex"
 
-    $runtimeSmali = Join-Path $runtimeDecoded "smali\amap"
-    if (!(Test-Path -LiteralPath $runtimeSmali)) {
-        throw "Runtime smali not found after decode: $runtimeSmali"
+    foreach ($relative in @("amap", "com\autonavi\companion", "com\android\tools\r8\annotations")) {
+        $runtimeSmali = Join-Path (Join-Path $runtimeDecoded "smali") $relative
+        if (!(Test-Path -LiteralPath $runtimeSmali)) {
+            throw "Runtime smali not found after decode: $runtimeSmali"
+        }
+        $targetSmali = Join-Path (Join-Path $decodedDir "smali") $relative
+        if (Test-Path -LiteralPath $targetSmali) {
+            Remove-Item -LiteralPath $targetSmali -Recurse -Force
+        }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetSmali) | Out-Null
+        Copy-Item -LiteralPath $runtimeSmali -Destination $targetSmali -Recurse -Force
     }
-    $targetSmali = Join-Path $decodedDir "smali\amap"
-    if (Test-Path -LiteralPath $targetSmali) {
-        Remove-Item -LiteralPath $targetSmali -Recurse -Force
-    }
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetSmali) | Out-Null
-    Copy-Item -LiteralPath $runtimeSmali -Destination $targetSmali -Recurse -Force
     Write-Host "[patch] merged runtime smali into classes.dex"
 }
 
@@ -341,9 +496,6 @@ New-Item -ItemType Directory -Force -Path $workBase | Out-Null
 Reset-Directory $workRoot $workBase
 New-Item -ItemType Directory -Force -Path $outFull, $dexInjectDir | Out-Null
 
-Write-Host "[patch] build runtime dex"
-Build-RuntimeDex $root $tools $profileConfig $runtimeDex $runtimeBuild
-
 if ($DecodedSource) {
     $decodedSourceFull = Resolve-FullPath $DecodedSource
     if (!(Test-Path -LiteralPath (Join-Path $decodedSourceFull "apktool.yml"))) {
@@ -359,10 +511,17 @@ if ($DecodedSource) {
     if ($EmulatorOnlyNoNativeLibs) {
         java -jar $apktoolFull d -f -resm keep -o $decodedDir $inputFull
     } else {
-        java -jar $apktoolFull d -f -r -o $decodedDir $inputFull
+        java -jar $apktoolFull d -f -o $decodedDir $inputFull
     }
     Check-Last "apktool decode"
 }
+
+Copy-CompanionResources $root $decodedDir
+Repair-InvalidDecodedAnimations $decodedDir
+Inject-CompanionManifest $decodedDir
+
+Write-Host "[patch] build runtime dex"
+Build-RuntimeDex $root $tools $profileConfig $runtimeDex $runtimeBuild $decodedDir
 
 Apply-InsertPatch $decodedDir $profileConfig.applicationPatch "Lamap/auto/patch/PatchRuntime;->init" "application init"
 Apply-ReplacePatch $decodedDir $profileConfig.hostFloatWindowPatch "host float window replacement"

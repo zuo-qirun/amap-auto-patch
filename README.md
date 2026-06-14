@@ -61,14 +61,27 @@ cd D:\Github\红绿灯\amap_auto_patch
 - 长按悬浮窗打开设置面板，支持启用开关、大小、样式切换。
 - 拖动悬浮窗后会保存位置。
 
+## 伴侣整合版
+
+当前构建会把 `amap_companion` 的主要功能合入高德同一个 APK 和同一个进程内：
+
+- 保留 `AMap Companion` 独立桌面入口，用于打开设置、诊断、插件市场和广播回放。
+- 保留 `OverlayService`，高德原悬浮窗创建时会启动这个服务并显示自定义悬浮窗。
+- 目标应用包名固定为当前高德包名，不再选择外部高德应用。
+- 移除 APK 更新、下载已改高德、安装器和 `FileProvider` 相关功能。
+- companion 资源会合并到高德资源表；运行时通过当前包名动态解析布局、图标和控件 ID。
+
+如果继续从 `amap_companion` 同步代码，需要同步 `companion/src/main/java` 与 `companion/src/main/res`，并保留上述集成限制。
+
 ## 实现概要
 
-- `runtime/` 编译为 dex，再通过 apktool 转成 smali，合并到原 `classes.dex`。
+- `runtime/` 和 `companion/` 一起编译为 dex，再通过 apktool 转成 smali，合并到原 `classes.dex`。
 - `MapApplicationProxy.onCreate()` 注入 `PatchRuntime.init(context)`。
 - 原悬浮窗 `WindowManager.addView(...)` 替换为 `PatchRuntime.replaceHostFloatWindow(...)`。
 - 原悬浮窗关闭时调用 `PatchRuntime.removePatchOverlay()`，避免自定义悬浮窗残留。
 - 红绿灯 wrapper 入口注入 `PatchRuntime.onTrafficLightWrapper(...)`，直接读取高德内部红绿灯对象。
 - 导航、巡航、车道、前后台状态通过 `AUTONAVI_STANDARD_BROADCAST_SEND` 动态广播接收。
+- apktool 全量解码时可能把部分动画资源解成 `false` 占位，脚本会生成最小空动画 XML 修复重打包。
 
 ## 虚拟机验证
 

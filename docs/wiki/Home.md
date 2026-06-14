@@ -1,6 +1,6 @@
 # AMap Auto Patch Wiki
 
-AMap Auto Patch 是一个高德地图车机版 APK 补丁器。它把 `runtime/src/main/java/amap/auto/patch` 里的 Java 运行时编译成 dex，再转成 smali 合并进高德原 APK，用自定义悬浮窗替换高德原悬浮窗。
+AMap Auto Patch 是一个高德地图车机版 APK 补丁器。它把 `runtime/src/main/java/amap/auto/patch` 和 `companion/src/main/java/com/autonavi/companion` 编译成 dex，再转成 smali 合并进高德原 APK，用集成在高德进程内的 AMap Companion 悬浮窗替换高德原悬浮窗。
 
 当前版本面向高德车机版 `9.1.0.600087`，profile 位于 `profiles/9.1.0.600087.json`。仓库不包含高德原 APK、改包 APK、apktool.jar 或任何构建产物。
 
@@ -11,12 +11,19 @@ AMap Auto Patch 是一个高德地图车机版 APK 补丁器。它把 `runtime/s
 ## 当前功能
 
 - 替换高德原悬浮窗，不需要同时安装伴随应用。
+- 在同一个 APK 内提供 `AMap Companion` 独立桌面入口，用于设置、诊断、插件市场和广播回放。
 - 显示导航和红绿灯两个分类，两个分类每 3 秒轮播。
 - 同一分类收到新数据时立即刷新。
 - 解析并缓存巡航数据，但当前不显示巡航分类。
 - 过滤无效红绿灯数据，例如倒计时和状态都为 0 的数据。
 - 长按悬浮窗打开设置面板，支持启用开关、样式和大小。
 - 拖动悬浮窗后保存位置。
+
+## 整合边界
+
+- 目标包名固定为当前高德包名，不再选择外部高德应用。
+- APK 更新、下载已改高德、安装器和 `FileProvider` 功能已移除。
+- companion 的资源会合并进高德资源表，代码运行时按当前包名动态解析 layout、id 和 drawable。
 
 ## 页面索引
 

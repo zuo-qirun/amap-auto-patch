@@ -1,10 +1,7 @@
 package amap.auto.patch;
 
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -21,8 +18,6 @@ public final class PatchRuntime {
 
     private static Context appContext;
     private static Handler mainHandler;
-    private static OverlayController overlay;
-    private static boolean receiverRegistered;
 
     private PatchRuntime() {
     }
@@ -34,9 +29,8 @@ public final class PatchRuntime {
         if (appContext == null) {
             appContext = context.getApplicationContext() != null ? context.getApplicationContext() : context;
             mainHandler = new Handler(Looper.getMainLooper());
-            overlay = new OverlayController(appContext, mainHandler);
         }
-        registerReceiverOnce();
+        com.autonavi.companion.PatchBridge.init(appContext);
         Log.i(TAG, "runtime initialized");
     }
 
@@ -47,19 +41,9 @@ public final class PatchRuntime {
             @Override
             public void run() {
                 try {
-                    if (overlay == null) {
-                        addHostWindow(windowManager, hostView, params);
-                        return;
-                    }
-                    overlay.rememberHost(windowManager, hostView, params);
-                    if (!overlay.isEnabled()) {
-                        addHostWindow(windowManager, hostView, params);
-                        return;
-                    }
-                    overlay.attach(windowManager, hostView, params);
+                    com.autonavi.companion.PatchBridge.startOverlayService(appContext);
                 } catch (Throwable t) {
                     Log.e(TAG, "replace host float window failed", t);
-                    addHostWindow(windowManager, hostView, params);
                 }
             }
         });
@@ -71,10 +55,7 @@ public final class PatchRuntime {
             @Override
             public void run() {
                 try {
-                    DataModel model = DataModel.fromTrafficLightWrapper(wrapper);
-                    if (model != null && overlay != null) {
-                        overlay.update(model);
-                    }
+                    com.autonavi.companion.PatchBridge.onTrafficLightWrapper(appContext, wrapper);
                 } catch (Throwable t) {
                     Log.e(TAG, "traffic light wrapper parse failed", t);
                 }
@@ -86,9 +67,8 @@ public final class PatchRuntime {
         runOnMain(new Runnable() {
             @Override
             public void run() {
-                if (overlay != null) {
-                    overlay.removePatchWindows();
-                }
+                // Companion OverlayService owns its own lifecycle; do not remove it
+                // just because the host float window was recreated or dismissed.
             }
         });
     }
@@ -98,58 +78,17 @@ public final class PatchRuntime {
         runOnMain(new Runnable() {
             @Override
             public void run() {
-                if (overlay == null || appContext == null) {
+                if (appContext == null) {
                     return;
                 }
-                WindowManager wm = (WindowManager) appContext.getSystemService(Context.WINDOW_SERVICE);
-                overlay.attach(wm, null, null);
-                DataModel model = new DataModel();
-                model.keyType = DataModel.KEY_TRAFFIC_LIGHT;
-                model.category = DataModel.CATEGORY_TRAFFIC_LIGHT;
-                model.mode = "虚拟机测试";
-                model.lightStatus = 1;
-                model.lightSeconds = 18;
-                model.lightDir = 0;
-                model.lightsCount = 3;
-                model.primary = "红灯 18s";
-                model.secondary = "PatchRuntime 测试入口";
-                overlay.update(model);
-            }
-        });
-    }
-
-    private static void registerReceiverOnce() {
-        if (receiverRegistered || appContext == null) {
-            return;
-        }
-        IntentFilter filter = new IntentFilter();
-        filter.addAction(ACTION_SEND);
-        appContext.registerReceiver(new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                handleBroadcast(intent);
-            }
-        }, filter);
-        receiverRegistered = true;
-    }
-
-    private static void handleBroadcast(final Intent intent) {
-        if (intent == null) {
-            return;
-        }
-        init(appContext);
-        runOnMain(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    Bundle extras = intent.getExtras();
-                    DataModel model = DataModel.fromBroadcast(intent.getAction(), extras);
-                    if (model != null && overlay != null) {
-                        overlay.update(model);
-                    }
-                } catch (Throwable t) {
-                    Log.e(TAG, "broadcast parse failed", t);
-                }
+                com.autonavi.companion.PatchBridge.startOverlayService(appContext);
+                Intent intent = new Intent(ACTION_SEND);
+                intent.putExtra("KEY_TYPE", 60073);
+                intent.putExtra("trafficLightStatus", 2);
+                intent.putExtra("redLightCountDownSeconds", 18);
+                intent.putExtra("dir", 4);
+                intent.putExtra("lightsCount", 3);
+                appContext.sendBroadcast(intent);
             }
         });
     }

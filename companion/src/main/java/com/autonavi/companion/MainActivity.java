@@ -1,0 +1,2992 @@
+package com.autonavi.companion;
+
+import android.Manifest;
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.AppOpsManager;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.hardware.display.DisplayManager;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.ClipDrawable;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Environment;
+import android.os.Process;
+import android.provider.Settings;
+import android.text.TextUtils;
+import android.util.Log;
+import android.view.Display;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.BaseAdapter;
+import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.CompoundButton;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ListView;
+import android.widget.ScrollView;
+import android.widget.SeekBar;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+
+public class MainActivity extends Activity {
+    private static final String TAG = "AmapCompanion";
+    static final String EXTRA_OPEN_SETTINGS = "open_companion_settings";
+    private static final String KEY_LAST_DESKTOP_LAUNCH_AT = "last_desktop_launch_at";
+    private static final long DOUBLE_DESKTOP_LAUNCH_WINDOW_MS = 30_000L;
+    static final String KEY_UPDATE_URL = "update_url";
+    static final String KEY_UPDATE_CHANNEL = "update_channel";
+    static final String UPDATE_CHANNEL_SERVER = "server";
+    static final String UPDATE_CHANNEL_GITHUB = "github";
+    static final String DEFAULT_UPDATE_CHANNEL = UPDATE_CHANNEL_SERVER;
+    static final String SERVER_UPDATE_URL = "https://amap-companion.zuoqirun.top/update.json";
+    static final String GITHUB_UPDATE_URL = "https://amap-companion.zuoqirun.top/update-github.json";
+    static final String HOMEPAGE_URL = "https://amap-companion.zuoqirun.top";
+    static final String REPOSITORY_URL = "https://github.com/zuo-qirun/amap-companion";
+    static final String LICENSE_URL = "https://github.com/zuo-qirun/amap-companion/blob/master/LICENSE";
+    static final String CUSTOM_MAP_SKILL_URL = "https://github.com/zuo-qirun/amap-cruise-wrapper-skill";
+    static final String CUSTOM_MAP_APK_URL = "https://github.com/zuo-qirun/amap-cruise-wrapper-skill/releases/download/v20260523-cruise-wrapper/amap-auto-cruise-wrapper-20260523.apk";
+    static final String CUSTOM_MAP_SKILL_MIRROR_URL = "https://gh-proxy.com/https://github.com/zuo-qirun/amap-cruise-wrapper-skill/archive/refs/heads/master.zip";
+    static final String CUSTOM_MAP_APK_MIRROR_URL = "https://gh.llkk.cc/https://github.com/zuo-qirun/amap-cruise-wrapper-skill/releases/download/v20260523-cruise-wrapper/amap-auto-cruise-wrapper-20260523.apk";
+    static final String DEFAULT_UPDATE_URL = SERVER_UPDATE_URL;
+    private static final String TARGET_PACKAGE_PREFIX = "com.autonavi.";
+    private static final int REQUEST_READ_LOGS_PERMISSION = 7001;
+    private static final int REQUEST_STORAGE_PERMISSIONS = 7002;
+    private static final int REQUEST_IMPORT_PLUGIN = 7101;
+
+    private TextView targetText;
+    private TextView updateText;
+    private TextView overlayScaleText;
+    private TextView clusterScaleText;
+    private TextView clusterDisplayText;
+    private TextView overlayBackgroundOpacityText;
+    private TextView overlayTextColorText;
+    private FrameLayout overlayPreviewStage;
+    private LinearLayout overlayPreviewPanel;
+    private Button overlayTextModeButton;
+    private Button overlayUiStyleButton;
+    private LinearLayout overlayStyleChoicesContainer;
+    private TextView previewModeText;
+    private TextView previewTurnText;
+    private LinearLayout previewLightRow;
+    private LinearLayout previewLaneSection;
+    private TextView previewEtaText;
+    private TextView previewAlertText;
+    private TextView previewDetailText;
+    private TextView pluginHubSummaryView;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        R.init(this);
+        migrateOverlayStylePrefs();
+        if (redirectDesktopLaunchToTarget(getIntent())) {
+            return;
+        }
+        View content = buildContent();
+        FontManager.applyToViewTree(this, content);
+        setContentView(content);
+        autoStartServiceOnAppOpen();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        redirectDesktopLaunchToTarget(intent);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_IMPORT_PLUGIN && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            installImportedPlugin(data.getData());
+        }
+    }
+
+    private void autoStartServiceOnAppOpen() {
+        if (!AppPrefs.isStartServiceOnAppOpenEnabled(this)) {
+            return;
+        }
+        targetText.postDelayed(() -> startCompanionService(false), 350L);
+    }
+
+    private ScrollView buildContent() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(0xFFF3F6FA);
+        boolean wideLayout = isWideLayout();
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(18), dp(22), dp(18), dp(24));
+        scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
+
+        LinearLayout hero = card(0xFF111827);
+        root.addView(hero, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView title = new TextView(this);
+        title.setText("AMap Companion");
+        title.setTextSize(28f);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(Color.WHITE);
+        hero.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        targetText = new TextView(this);
+        targetText.setTextSize(14f);
+        targetText.setTextColor(0xFFD1D5DB);
+        targetText.setLineSpacing(dp(2), 1.0f);
+        LinearLayout.LayoutParams targetLp = new LinearLayout.LayoutParams(-1, -2);
+        targetLp.setMargins(0, dp(8), 0, 0);
+        hero.addView(targetText, targetLp);
+        updateTargetText();
+
+        updateText = new TextView(this);
+        updateText.setTextSize(13f);
+        updateText.setTextColor(0xFFA7F3D0);
+        updateText.setLineSpacing(dp(2), 1.0f);
+        LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(-1, -2);
+        updateLp.setMargins(0, dp(8), 0, 0);
+        hero.addView(updateText, updateLp);
+        updateUpdateText("\u96c6\u6210\u7248\n\u5df2\u79fb\u9664 APK \u66f4\u65b0/\u4e0b\u8f7d\u529f\u80fd");
+
+        addAnnouncementSection(root);
+
+        LinearLayout contentArea = new LinearLayout(this);
+        contentArea.setOrientation(wideLayout ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams contentLp = new LinearLayout.LayoutParams(-1, -2);
+        contentLp.setMargins(0, dp(14), 0, 0);
+        root.addView(contentArea, contentLp);
+
+        LinearLayout leftColumn = new LinearLayout(this);
+        leftColumn.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(-1, -2);
+        if (wideLayout) {
+            leftLp = new LinearLayout.LayoutParams(0, -2, 1f);
+            leftLp.setMargins(0, 0, dp(7), 0);
+        }
+        contentArea.addView(leftColumn, leftLp);
+
+        LinearLayout rightColumn = new LinearLayout(this);
+        rightColumn.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams rightLp = new LinearLayout.LayoutParams(-1, -2);
+        if (wideLayout) {
+            rightLp = new LinearLayout.LayoutParams(0, -2, 1f);
+            rightLp.setMargins(dp(7), 0, 0, 0);
+        } else {
+            rightLp.setMargins(0, dp(14), 0, 0);
+        }
+        contentArea.addView(rightColumn, rightLp);
+
+        LinearLayout actions = card(Color.WHITE);
+        leftColumn.addView(actions, new LinearLayout.LayoutParams(-1, -2));
+        addActionButtons(actions, wideLayout);
+
+        LinearLayout settings = card(Color.WHITE);
+        rightColumn.addView(settings, new LinearLayout.LayoutParams(-1, -2));
+        addOverlayTargetControls(settings);
+        addOverlayScaleControls(settings);
+        addClusterMirrorControls(settings);
+        addOverlayContentControls(settings);
+        addBehaviorControls(settings);
+        addOpenSourceSection(wideLayout ? leftColumn : rightColumn, wideLayout);
+
+        return scroll;
+    }
+
+    private void addActionButtons(LinearLayout parent, boolean wideLayout) {
+        if (wideLayout) {
+            addButtonPair(parent,
+                    button("\u76ee\u6807\u5df2\u9501\u5b9a", v -> showLockedTargetInfo(), 0xFF2563EB),
+                    button("\u6388\u6743\u60ac\u6d6e\u7a97", v -> requestOverlayPermission(), 0xFF475569));
+            addButtonPair(parent,
+                    button("\u542f\u52a8\u4f34\u4fa3\u670d\u52a1", v -> startCompanionService(), 0xFF0F766E),
+                    button("\u5173\u95ed\u4f34\u4fa3\u670d\u52a1", v -> stopCompanionService(), 0xFFB45309));
+            addButtonPair(parent,
+                    button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827),
+                    button("\u8bca\u65ad\u4e2d\u5fc3", v -> openDiagnosticCenter(), 0xFF0F172A));
+            addButtonPair(parent,
+                    button("\u96c6\u6210\u7248\u8bf4\u660e", v -> showIntegratedBuildInfo(), 0xFF334155),
+                    button("\u8bca\u65ad\u4e2d\u5fc3", v -> openDiagnosticCenter(), 0xFF0F172A));
+            addButtonPair(parent,
+                    button("\u63d2\u4ef6\u5e02\u573a / \u672c\u5730\u63d2\u4ef6", v -> showPluginHubDialog(), 0xFF7C3AED),
+                    button("\u67e5\u770b/\u4fdd\u5b58\u65e5\u5fd7", v -> showLogcatDialog(), 0xFF4F46E5));
+            return;
+        }
+        parent.addView(button("\u76ee\u6807\u5df2\u9501\u5b9a", v -> showLockedTargetInfo(), 0xFF2563EB));
+        parent.addView(button("\u6388\u6743\u60ac\u6d6e\u7a97", v -> requestOverlayPermission(), 0xFF475569));
+        parent.addView(button("\u542f\u52a8\u4f34\u4fa3\u670d\u52a1", v -> startCompanionService(), 0xFF0F766E));
+        parent.addView(button("\u5173\u95ed\u4f34\u4fa3\u670d\u52a1", v -> stopCompanionService(), 0xFFB45309));
+        parent.addView(button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827));
+        parent.addView(button("\u96c6\u6210\u7248\u8bf4\u660e", v -> showIntegratedBuildInfo(), 0xFF334155));
+        parent.addView(button("\u63d2\u4ef6\u5e02\u573a / \u672c\u5730\u63d2\u4ef6", v -> showPluginHubDialog(), 0xFF7C3AED));
+        parent.addView(button("\u67e5\u770b/\u4fdd\u5b58\u65e5\u5fd7", v -> showLogcatDialog(), 0xFF4F46E5));
+        parent.addView(button("\u8bca\u65ad\u4e2d\u5fc3", v -> openDiagnosticCenter(), 0xFF0F172A));
+    }
+
+    private void addAnnouncementSection(LinearLayout root) {
+        LinearLayout section = card(Color.WHITE);
+        LinearLayout.LayoutParams sectionLp = new LinearLayout.LayoutParams(-1, -2);
+        sectionLp.setMargins(0, dp(14), 0, 0);
+        root.addView(section, sectionLp);
+
+        TextView title = new TextView(this);
+        title.setText("\u516c\u544a");
+        title.setTextSize(16f);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(0xFF111827);
+        section.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView body = new TextView(this);
+        body.setText("\u672c\u8f6f\u4ef6\u4e3a GitHub \u5f00\u6e90\u9879\u76ee\uff0c\u53ef\u514d\u8d39\u4f7f\u7528\u3002\n"
+                + "\u53cd\u9988/\u4ea4\u6d41\u7fa4 QQ\u7fa4\uff1a1106923186");
+        body.setTextSize(14f);
+        body.setTextColor(0xFF334155);
+        body.setTextIsSelectable(true);
+        LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(-1, -2);
+        bodyLp.setMargins(0, dp(8), 0, 0);
+        section.addView(body, bodyLp);
+    }
+
+    private void addOpenSourceSection(LinearLayout root, boolean compactTopMargin) {
+        LinearLayout section = card(Color.WHITE);
+        LinearLayout.LayoutParams sectionLp = new LinearLayout.LayoutParams(-1, -2);
+        sectionLp.setMargins(0, compactTopMargin ? dp(10) : dp(14), 0, 0);
+        root.addView(section, sectionLp);
+
+        TextView title = new TextView(this);
+        title.setText("\u5f00\u6e90\u4fe1\u606f");
+        title.setTextSize(16f);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(0xFF111827);
+        section.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView homepage = new TextView(this);
+        homepage.setText("\u5b98\u7f51\n" + HOMEPAGE_URL);
+        homepage.setTextSize(13f);
+        homepage.setTextColor(0xFF334155);
+        homepage.setLineSpacing(dp(2), 1.0f);
+        homepage.setTextIsSelectable(true);
+        LinearLayout.LayoutParams homepageLp = new LinearLayout.LayoutParams(-1, -2);
+        homepageLp.setMargins(0, dp(8), 0, 0);
+        section.addView(homepage, homepageLp);
+
+        TextView repo = new TextView(this);
+        repo.setText("\u5f00\u6e90\u5730\u5740\n" + REPOSITORY_URL);
+        repo.setTextSize(13f);
+        repo.setTextColor(0xFF334155);
+        repo.setLineSpacing(dp(2), 1.0f);
+        repo.setTextIsSelectable(true);
+        LinearLayout.LayoutParams repoLp = new LinearLayout.LayoutParams(-1, -2);
+        repoLp.setMargins(0, dp(8), 0, 0);
+        section.addView(repo, repoLp);
+
+        TextView license = new TextView(this);
+        license.setText("\u5f00\u6e90\u8bb8\u53ef\u8bc1\nGNU GPL v3.0\n\u672c\u9879\u76ee\u6309 GPL v3.0 \u5f00\u6e90\u53d1\u5e03\uff0c\u53ef\u4ee5\u4f7f\u7528\u3001\u4fee\u6539\u548c\u5206\u53d1\uff0c\u4f46\u5206\u53d1\u4fee\u6539\u7248\u65f6\u9700\u7ee7\u7eed\u4ee5\u76f8\u540c\u8bb8\u53ef\u8bc1\u5f00\u6e90\uff0c\u5e76\u9644\u4e0a\u539f\u59cb\u8bb8\u53ef\u8bc1\u6587\u672c\u3002");
+        license.setTextSize(13f);
+        license.setTextColor(0xFF334155);
+        license.setLineSpacing(dp(2), 1.0f);
+        LinearLayout.LayoutParams licenseLp = new LinearLayout.LayoutParams(-1, -2);
+        licenseLp.setMargins(0, dp(10), 0, 0);
+        section.addView(license, licenseLp);
+
+        TextView customMap = new TextView(this);
+        customMap.setText("\u5de1\u822a\u7ea2\u7eff\u706f\u5b9a\u5236\u5730\u56fe\n\u5de1\u822a\u5de6\u8f6c/\u76f4\u884c\u591a\u65b9\u5411\u5012\u8ba1\u65f6\u9700\u914d\u5408\u5b9a\u5236\u9ad8\u5fb7\u5730\u56fe\uff1a\nGitHub: " + CUSTOM_MAP_SKILL_URL + "\n\u955c\u50cf ZIP: " + CUSTOM_MAP_SKILL_MIRROR_URL);
+        customMap.setTextSize(13f);
+        customMap.setTextColor(0xFF334155);
+        customMap.setLineSpacing(dp(2), 1.0f);
+        customMap.setTextIsSelectable(true);
+        LinearLayout.LayoutParams customMapLp = new LinearLayout.LayoutParams(-1, -2);
+        customMapLp.setMargins(0, dp(10), 0, 0);
+        section.addView(customMap, customMapLp);
+
+        if (isWideLayout()) {
+            addButtonPair(section,
+                    button("\u8bbf\u95ee\u5b98\u7f51", v -> openUrl(HOMEPAGE_URL), 0xFF2563EB),
+                    button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
+            addButtonPair(section,
+                    button("\u5b9a\u5236\u5730\u56fe Skill", v -> chooseDownloadSource("\u5b9a\u5236\u5730\u56fe Skill", CUSTOM_MAP_SKILL_URL, CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF0F766E),
+                    button("\u96c6\u6210\u7248\u8bf4\u660e", v -> showIntegratedBuildInfo(), 0xFFB45309));
+        } else {
+            section.addView(button("\u8bbf\u95ee\u5b98\u7f51", v -> openUrl(HOMEPAGE_URL), 0xFF2563EB));
+            section.addView(button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
+            section.addView(button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
+            section.addView(button("\u5b9a\u5236\u5730\u56fe Skill", v -> chooseDownloadSource("\u5b9a\u5236\u5730\u56fe Skill", CUSTOM_MAP_SKILL_URL, CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF0F766E));
+            section.addView(button("\u96c6\u6210\u7248\u8bf4\u660e", v -> showIntegratedBuildInfo(), 0xFFB45309));
+        }
+    }
+
+    private void addOverlayScaleControls(LinearLayout parent) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(2), dp(10), dp(2), 0);
+
+        overlayScaleText = new TextView(this);
+        overlayScaleText.setTextSize(14f);
+        overlayScaleText.setTextColor(0xFF111827);
+        overlayScaleText.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(overlayScaleText, new LinearLayout.LayoutParams(-1, -2));
+
+        SeekBar seekBar = scaleSeekBar();
+        seekBar.setMax(AppPrefs.MAX_OVERLAY_SCALE_PERCENT - AppPrefs.MIN_OVERLAY_SCALE_PERCENT);
+        seekBar.setProgress(AppPrefs.getOverlayScalePercent(this) - AppPrefs.MIN_OVERLAY_SCALE_PERCENT);
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                int percent = AppPrefs.MIN_OVERLAY_SCALE_PERCENT + progress;
+                updateOverlayScaleText(percent);
+                if (fromUser) {
+                    saveOverlayScalePercent(percent);
+                    notifyOverlayScaleChanged();
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar bar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) {
+                int percent = AppPrefs.MIN_OVERLAY_SCALE_PERCENT + bar.getProgress();
+                saveOverlayScalePercent(percent);
+                updateOverlayScaleText(percent);
+                notifyOverlayScaleChanged();
+            }
+        });
+        box.addView(seekBar, new LinearLayout.LayoutParams(-1, -2));
+        updateOverlayScaleText(AppPrefs.getOverlayScalePercent(this));
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(10), 0, 0);
+        parent.addView(box, lp);
+    }
+
+    private void addOverlayTargetTiles(LinearLayout parent) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setWeightSum(2f);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+        rowLp.setMargins(0, dp(10), 0, 0);
+        parent.addView(row, rowLp);
+
+        TextView main = overlayTargetTile("\u4e3b\u5c4f\u60ac\u6d6e\u7a97", AppPrefs.KEY_MAIN_OVERLAY_ENABLED);
+        TextView cluster = overlayTargetTile("\u526f\u5c4f\u60ac\u6d6e\u7a97", AppPrefs.KEY_CLUSTER_MIRROR_ENABLED);
+        LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(0, dp(68), 1f);
+        leftLp.setMargins(0, 0, dp(6), 0);
+        LinearLayout.LayoutParams rightLp = new LinearLayout.LayoutParams(0, dp(68), 1f);
+        rightLp.setMargins(dp(6), 0, 0, 0);
+        row.addView(main, leftLp);
+        row.addView(cluster, rightLp);
+    }
+
+    private TextView overlayTargetTile(String label, String key) {
+        boolean active = AppPrefs.KEY_CLUSTER_MIRROR_ENABLED.equals(key)
+                ? AppPrefs.isClusterMirrorEnabled(this)
+                : AppPrefs.isMainOverlayEnabled(this);
+        TextView tile = optionTile(label, active, 0xFF0891B2, 0xFF2563EB);
+        tile.setOnClickListener(v -> {
+            boolean next = !v.isSelected();
+            v.setSelected(next);
+            if (AppPrefs.KEY_CLUSTER_MIRROR_ENABLED.equals(key)) {
+                saveClusterMirrorEnabled(next);
+                if (next) {
+                    startOverlayService();
+                }
+                notifyClusterMirrorChanged();
+            } else {
+                saveMainOverlayEnabled(next);
+                if (next) {
+                    startOverlayService();
+                }
+                notifyMainOverlayChanged();
+            }
+            styleOptionTile((TextView) v, next, 0xFF0891B2, 0xFF2563EB);
+            stopServiceIfNoVisuals();
+        });
+        return tile;
+    }
+
+    private void addClusterMirrorControls(LinearLayout parent) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(2), dp(12), dp(2), 0);
+
+        TextView title = new TextView(this);
+        title.setText("\u526f\u5c4f\u60ac\u6d6e\u7a97");
+        title.setTextSize(14f);
+        title.setTextColor(0xFF111827);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        clusterDisplayText = new TextView(this);
+        clusterDisplayText.setTextSize(13f);
+        clusterDisplayText.setTextColor(0xFF334155);
+        LinearLayout.LayoutParams displayTextLp = new LinearLayout.LayoutParams(-1, -2);
+        displayTextLp.setMargins(0, dp(8), 0, 0);
+        box.addView(clusterDisplayText, displayTextLp);
+        updateClusterDisplayText();
+
+        box.addView(button("\u9009\u62e9\u6295\u5c4f\u5c4f\u5e55", v -> chooseClusterDisplay(), 0xFF334155));
+
+        clusterScaleText = new TextView(this);
+        clusterScaleText.setTextSize(13f);
+        clusterScaleText.setTextColor(0xFF334155);
+        clusterScaleText.setTypeface(Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams scaleTextLp = new LinearLayout.LayoutParams(-1, -2);
+        scaleTextLp.setMargins(0, dp(6), 0, 0);
+        box.addView(clusterScaleText, scaleTextLp);
+
+        SeekBar seekBar = scaleSeekBar();
+        seekBar.setMax(AppPrefs.MAX_OVERLAY_SCALE_PERCENT - AppPrefs.MIN_OVERLAY_SCALE_PERCENT);
+        seekBar.setProgress(AppPrefs.getClusterScalePercent(this) - AppPrefs.MIN_OVERLAY_SCALE_PERCENT);
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                int percent = AppPrefs.MIN_OVERLAY_SCALE_PERCENT + progress;
+                updateClusterScaleText(percent);
+                if (fromUser) {
+                    saveClusterScalePercent(percent);
+                    notifyClusterMirrorChanged();
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar bar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) {
+                int percent = AppPrefs.MIN_OVERLAY_SCALE_PERCENT + bar.getProgress();
+                saveClusterScalePercent(percent);
+                updateClusterScaleText(percent);
+                notifyClusterMirrorChanged();
+            }
+        });
+        box.addView(seekBar, new LinearLayout.LayoutParams(-1, -2));
+        updateClusterScaleText(AppPrefs.getClusterScalePercent(this));
+
+        ClusterJoystickView joystick = new ClusterJoystickView(this);
+        joystick.setOnMoveListener((dx, dy) -> moveClusterBy(dx, dy));
+        LinearLayout.LayoutParams joystickLp = new LinearLayout.LayoutParams(dp(148), dp(148));
+        joystickLp.gravity = Gravity.CENTER_HORIZONTAL;
+        joystickLp.setMargins(0, dp(12), 0, 0);
+        box.addView(joystick, joystickLp);
+
+        TextView joystickLabel = new TextView(this);
+        joystickLabel.setText("\u526f\u5c4f\u60ac\u6d6e\u7a97\u8c03\u8282\u73af");
+        joystickLabel.setTextSize(12f);
+        joystickLabel.setTextColor(0xFF475569);
+        joystickLabel.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams joystickLabelLp = new LinearLayout.LayoutParams(-1, -2);
+        joystickLabelLp.setMargins(0, dp(5), 0, 0);
+        box.addView(joystickLabel, joystickLabelLp);
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(8), 0, 0);
+        parent.addView(box, lp);
+    }
+
+    private void addOverlayTargetControls(LinearLayout parent) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(2), dp(12), dp(2), 0);
+
+        TextView title = new TextView(this);
+        title.setText("\u60ac\u6d6e\u7a97\u663e\u793a\u4f4d\u7f6e");
+        title.setTextSize(14f);
+        title.setTextColor(0xFF111827);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        addOverlayTargetTiles(box);
+        addOverlayUiStyleChoices(box);
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(8), 0, 0);
+        parent.addView(box, lp);
+    }
+
+    private void addOverlayContentControls(LinearLayout parent) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(2), dp(12), dp(2), 0);
+
+        TextView title = new TextView(this);
+        title.setText("\u81ea\u5b9a\u4e49\u60ac\u6d6e\u7a97\u5185\u5bb9");
+        title.setTextSize(14f);
+        title.setTextColor(0xFF111827);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams gridLp = new LinearLayout.LayoutParams(-1, -2);
+        gridLp.setMargins(0, dp(5), 0, 0);
+        box.addView(grid, gridLp);
+
+        if (isWideLayout()) {
+            addTogglePair(grid,
+                    contentToggle("\u9876\u90e8\u72b6\u6001", AppPrefs.KEY_SHOW_MODE),
+                    contentToggle("\u8def\u7ebf\u6307\u5f15", AppPrefs.KEY_SHOW_TURN));
+            addTogglePair(grid,
+                    contentToggle("\u7ea2\u7eff\u706f\u5012\u8ba1\u65f6", AppPrefs.KEY_SHOW_LIGHT),
+                    contentToggle("\u8f66\u9053\u4fe1\u606f", AppPrefs.KEY_SHOW_LANE));
+            addTogglePair(grid,
+                    contentToggle("\u5269\u4f59\u91cc\u7a0b/\u65f6\u95f4/\u5230\u8fbe\u65f6\u95f4", AppPrefs.KEY_SHOW_ETA),
+                    contentToggle("\u76ee\u7684\u5730\u5730\u70b9", AppPrefs.KEY_SHOW_DESTINATION));
+            addTogglePair(grid,
+                    contentToggle("\u9650\u901f/\u7535\u5b50\u773c/\u7ea2\u7eff\u706f\u4e2a\u6570", AppPrefs.KEY_SHOW_ALERT),
+                    contentToggle("\u8def\u51b5\u5149\u67f1\u6761", AppPrefs.KEY_SHOW_TMC_BAR));
+            addTogglePair(grid,
+                    contentToggle("\u7ecf\u5178UI\u670d\u52a1\u533a\u4fe1\u606f", AppPrefs.KEY_SHOW_SERVICE_AREA),
+                    contentToggle("\u8be6\u7ec6\u72b6\u6001", AppPrefs.KEY_SHOW_DETAIL));
+            addOverspeedBehaviorControls(grid);
+        } else {
+            grid.addView(contentToggle("\u9876\u90e8\u72b6\u6001", AppPrefs.KEY_SHOW_MODE));
+            grid.addView(contentToggle("\u8def\u7ebf\u6307\u5f15", AppPrefs.KEY_SHOW_TURN));
+            grid.addView(contentToggle("\u7ea2\u7eff\u706f\u5012\u8ba1\u65f6", AppPrefs.KEY_SHOW_LIGHT));
+            grid.addView(contentToggle("\u8f66\u9053\u4fe1\u606f", AppPrefs.KEY_SHOW_LANE));
+            grid.addView(contentToggle("\u5269\u4f59\u91cc\u7a0b/\u65f6\u95f4/\u5230\u8fbe\u65f6\u95f4", AppPrefs.KEY_SHOW_ETA));
+            grid.addView(contentToggle("\u76ee\u7684\u5730\u5730\u70b9", AppPrefs.KEY_SHOW_DESTINATION));
+            grid.addView(contentToggle("\u9650\u901f/\u7535\u5b50\u773c/\u7ea2\u7eff\u706f\u4e2a\u6570", AppPrefs.KEY_SHOW_ALERT));
+            grid.addView(contentToggle("\u8def\u51b5\u5149\u67f1\u6761", AppPrefs.KEY_SHOW_TMC_BAR));
+            grid.addView(contentToggle("\u7ecf\u5178UI\u670d\u52a1\u533a\u4fe1\u606f", AppPrefs.KEY_SHOW_SERVICE_AREA));
+            grid.addView(contentToggle("\u8be6\u7ec6\u72b6\u6001", AppPrefs.KEY_SHOW_DETAIL));
+            addOverspeedBehaviorControls(grid);
+        }
+        addBackgroundOpacityControls(box);
+        overlayTextModeButton = button(textModeButtonText(), v -> chooseTextMode(), 0xFF475569);
+        LinearLayout.LayoutParams buttonLp = new LinearLayout.LayoutParams(-1, dp(42));
+        buttonLp.setMargins(0, dp(8), 0, 0);
+        overlayTextModeButton.setLayoutParams(buttonLp);
+        box.addView(overlayTextModeButton);
+        addTextColorControls(box);
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(8), 0, 0);
+        parent.addView(box, lp);
+        updateOverlayPreviewContentVisibility();
+        applyOverlayPreviewStyle();
+    }
+
+    private void addBehaviorControls(LinearLayout parent) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(2), dp(12), dp(2), 0);
+
+        TextView title = new TextView(this);
+        title.setText("自动启动与显示策略");
+        title.setTextSize(14f);
+        title.setTextColor(0xFF111827);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView hint = new TextView(this);
+        hint.setText("除“桌面启动时直接进入目标应用”外，这些选项不会主动启动目标高德应用。启用桌面直达后，首次点击桌面图标会打开目标应用；30秒内再次点击桌面图标可进入伴侣设置，轻触主屏悬浮窗也可进入。开机或亮屏自动启动服务开启后，系统重启、应用更新或车机亮屏时会恢复伴侣服务。");
+        hint.setTextSize(12f);
+        hint.setTextColor(0xFF64748B);
+        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
+        hintLp.setMargins(0, dp(6), 0, 0);
+        box.addView(hint, hintLp);
+
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams gridLp = new LinearLayout.LayoutParams(-1, -2);
+        gridLp.setMargins(0, dp(5), 0, 0);
+        box.addView(grid, gridLp);
+
+        if (isWideLayout()) {
+            addTogglePair(grid,
+                    behaviorToggle("开机或亮屏自动启动服务", AppPrefs.KEY_AUTO_START_ENABLED),
+                    behaviorToggle("进入软件后自动启动服务", AppPrefs.KEY_START_SERVICE_ON_APP_OPEN));
+            addTogglePair(grid,
+                    behaviorToggle("桌面启动时直接进入目标应用", AppPrefs.KEY_LAUNCH_TARGET_FROM_DESKTOP),
+                    behaviorToggle("高德广播自动显示悬浮窗", AppPrefs.KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND));
+            addTogglePair(grid,
+                    behaviorToggle("高德前台隐藏中控悬浮窗", AppPrefs.KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND),
+                    behaviorToggle("导航/巡航退出隐藏仪表", AppPrefs.KEY_HIDE_CLUSTER_WHEN_INACTIVE));
+        } else {
+            grid.addView(behaviorToggle("开机或亮屏自动启动服务", AppPrefs.KEY_AUTO_START_ENABLED));
+            grid.addView(behaviorToggle("进入软件后自动启动服务", AppPrefs.KEY_START_SERVICE_ON_APP_OPEN));
+            grid.addView(behaviorToggle("桌面启动时直接进入目标应用", AppPrefs.KEY_LAUNCH_TARGET_FROM_DESKTOP));
+            grid.addView(behaviorToggle("高德广播自动显示悬浮窗", AppPrefs.KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND));
+            grid.addView(behaviorToggle("高德前台隐藏中控悬浮窗", AppPrefs.KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND));
+            grid.addView(behaviorToggle("导航/巡航退出隐藏仪表", AppPrefs.KEY_HIDE_CLUSTER_WHEN_INACTIVE));
+        }
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(8), 0, 0);
+        parent.addView(box, lp);
+    }
+
+    private void addOverspeedBehaviorControls(LinearLayout grid) {
+        CheckBox mild = behaviorToggle("\u666e\u901a\u8d85\u901f\u8fb9\u6846\u63d0\u9192", AppPrefs.KEY_OVERSPEED_MILD_WARNING);
+        CheckBox medium = behaviorToggle("\u8d85\u901f10%\u8fb9\u6846\u63d0\u9192", AppPrefs.KEY_OVERSPEED_MEDIUM_WARNING);
+        if (isWideLayout()) {
+            addTogglePair(grid, mild, medium);
+        } else {
+            grid.addView(mild);
+            grid.addView(medium);
+        }
+    }
+
+    private void addBackgroundOpacityControls(LinearLayout parent) {
+        LinearLayout palette = new LinearLayout(this);
+        palette.setOrientation(LinearLayout.HORIZONTAL);
+        palette.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams paletteLp = new LinearLayout.LayoutParams(-1, -2);
+        paletteLp.setMargins(0, dp(8), 0, 0);
+        parent.addView(palette, paletteLp);
+
+        View defaultSwatch = new View(this);
+        defaultSwatch.setContentDescription("\u9ed8\u8ba4\u4e3b\u80cc\u666f\u8272");
+        LinearLayout.LayoutParams swatchLp = new LinearLayout.LayoutParams(dp(30), dp(30));
+        palette.addView(defaultSwatch, swatchLp);
+        defaultSwatch.setOnClickListener(v -> {
+            saveBackgroundColor(AppPrefs.DEFAULT_BACKGROUND_COLOR);
+            updateDefaultBackgroundSwatch(defaultSwatch);
+            applyOverlayPreviewStyle();
+            notifyOverlayStyleChanged();
+        });
+        updateDefaultBackgroundSwatch(defaultSwatch);
+
+        SeekBar colorSeekBar = compactColorSeekBar();
+        colorSeekBar.setMax(359);
+        colorSeekBar.setProgress(hueForBackgroundColor(AppPrefs.getBackgroundColor(this)));
+        colorSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                if (fromUser) {
+                    saveBackgroundColor(colorForHue(progress));
+                    updateDefaultBackgroundSwatch(defaultSwatch);
+                    applyOverlayPreviewStyle();
+                    notifyOverlayStyleChanged();
+                }
+            }
+
+            @Override public void onStartTrackingTouch(SeekBar bar) {}
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) {
+                saveBackgroundColor(colorForHue(bar.getProgress()));
+                updateDefaultBackgroundSwatch(defaultSwatch);
+                applyOverlayPreviewStyle();
+                notifyOverlayStyleChanged();
+            }
+        });
+        LinearLayout.LayoutParams colorLp = new LinearLayout.LayoutParams(0, -2, 1f);
+        colorLp.setMargins(dp(8), 0, 0, 0);
+        palette.addView(colorSeekBar, colorLp);
+
+        overlayBackgroundOpacityText = new TextView(this);
+        overlayBackgroundOpacityText.setTextSize(13f);
+        overlayBackgroundOpacityText.setTextColor(0xFF334155);
+        overlayBackgroundOpacityText.setTypeface(Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(-1, -2);
+        textLp.setMargins(0, dp(4), 0, 0);
+        parent.addView(overlayBackgroundOpacityText, textLp);
+
+        SeekBar seekBar = scaleSeekBar();
+        seekBar.setPadding(dp(8), dp(2), dp(8), dp(8));
+        seekBar.setMinimumHeight(dp(40));
+        seekBar.setMax(AppPrefs.MAX_BACKGROUND_OPACITY_PERCENT - AppPrefs.MIN_BACKGROUND_OPACITY_PERCENT);
+        seekBar.setProgress(AppPrefs.getBackgroundOpacityPercent(this) - AppPrefs.MIN_BACKGROUND_OPACITY_PERCENT);
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                int percent = AppPrefs.MIN_BACKGROUND_OPACITY_PERCENT + progress;
+                updateBackgroundOpacityText(percent);
+                if (fromUser) {
+                    saveBackgroundOpacityPercent(percent);
+                    applyOverlayPreviewStyle();
+                    notifyOverlayStyleChanged();
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar bar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) {
+                int percent = AppPrefs.MIN_BACKGROUND_OPACITY_PERCENT + bar.getProgress();
+                saveBackgroundOpacityPercent(percent);
+                updateBackgroundOpacityText(percent);
+                applyOverlayPreviewStyle();
+                notifyOverlayStyleChanged();
+            }
+        });
+        parent.addView(seekBar, new LinearLayout.LayoutParams(-1, -2));
+        updateBackgroundOpacityText(AppPrefs.getBackgroundOpacityPercent(this));
+    }
+
+    private void addTextColorControls(LinearLayout parent) {
+        overlayTextColorText = new TextView(this);
+        overlayTextColorText.setTextSize(13f);
+        overlayTextColorText.setTextColor(0xFF111827);
+        overlayTextColorText.setTypeface(Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(-1, -2);
+        textLp.setMargins(0, dp(7), 0, 0);
+        parent.addView(overlayTextColorText, textLp);
+
+        SeekBar seekBar = compactColorSeekBar();
+        seekBar.setMax(359);
+        seekBar.setProgress(hueForBackgroundColor(AppPrefs.getTextColor(this)));
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                if (fromUser) {
+                    saveTextColor(colorForTextHue(progress));
+                    updateTextColorText(true);
+                    applyOverlayPreviewStyle();
+                    notifyOverlayStyleChanged();
+                }
+            }
+
+            @Override public void onStartTrackingTouch(SeekBar bar) {}
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) {
+                saveTextColor(colorForTextHue(bar.getProgress()));
+                updateTextColorText(true);
+                applyOverlayPreviewStyle();
+                notifyOverlayStyleChanged();
+            }
+        });
+        parent.addView(seekBar, new LinearLayout.LayoutParams(-1, -2));
+        updateTextColorText(AppPrefs.isCustomTextColorEnabled(this));
+    }
+
+    private void addOverlayUiStyleChoices(LinearLayout parent) {
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        overlayStyleChoicesContainer = list;
+        LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(-1, -2);
+        listLp.setMargins(0, dp(10), 0, 0);
+        parent.addView(list, listLp);
+        populateOverlayUiStyleChoices(list);
+    }
+
+    private void populateOverlayUiStyleChoices(LinearLayout list) {
+        list.removeAllViews();
+        ArrayList<OverlayStyleChoice> choices = overlayStyleChoices();
+        for (int i = 0; i < choices.size(); i += 2) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setWeightSum(2f);
+            list.addView(row, new LinearLayout.LayoutParams(-1, -2));
+            addStyleChoice(row, choices.get(i));
+            if (i + 1 < choices.size()) {
+                addStyleChoice(row, choices.get(i + 1));
+            } else {
+                View spacer = new View(this);
+                row.addView(spacer, new LinearLayout.LayoutParams(0, dp(58), 1f));
+            }
+        }
+    }
+
+    private void rebuildOverlayUiStyleChoices() {
+        if (overlayStyleChoicesContainer != null) {
+            populateOverlayUiStyleChoices(overlayStyleChoicesContainer);
+        }
+    }
+
+    private void addStyleChoice(LinearLayout row, OverlayStyleChoice choice) {
+        TextView tile = optionTile(choice.label, choice.id.equals(AppPrefs.getOverlayUiStyle(this)),
+                0xFF4F46E5, 0xFF7C3AED);
+        tile.setTag(choice.id);
+        tile.setOnClickListener(v -> {
+            saveOverlayUiStyle(choice.id);
+            refreshStyleChoices((ViewGroup) row.getParent());
+            applyOverlayPreviewStyle();
+            notifyOverlayStyleChanged();
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(58), 1f);
+        lp.setMargins(dp(2), 0, dp(2), 0);
+        row.addView(tile, lp);
+    }
+
+    private void refreshStyleChoices(ViewGroup list) {
+        String current = AppPrefs.getOverlayUiStyle(this);
+        for (int i = 0; i < list.getChildCount(); i++) {
+            View child = list.getChildAt(i);
+            if (child instanceof ViewGroup) {
+                refreshStyleChoices((ViewGroup) child);
+            } else if (child instanceof TextView && child.getTag() instanceof String) {
+                TextView tile = (TextView) child;
+                styleOptionTile(tile, current.equals(child.getTag()), 0xFF4F46E5, 0xFF7C3AED);
+            }
+        }
+    }
+
+    private void saveBackgroundColor(int color) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(AppPrefs.KEY_BACKGROUND_COLOR, AppPrefs.normalizeBackgroundColor(color))
+                .apply();
+    }
+
+    private void updateDefaultBackgroundSwatch(View swatch) {
+        int selected = AppPrefs.getBackgroundColor(this);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.RECTANGLE);
+        bg.setCornerRadius(dp(8));
+        bg.setColor(AppPrefs.DEFAULT_BACKGROUND_COLOR);
+        bg.setStroke(dp(selected == AppPrefs.DEFAULT_BACKGROUND_COLOR ? 3 : 1),
+                selected == AppPrefs.DEFAULT_BACKGROUND_COLOR ? 0xFF38BDF8 : 0x99CBD5E1);
+        swatch.setBackground(bg);
+    }
+
+    private int colorForHue(int hue) {
+        return Color.HSVToColor(new float[]{Math.max(0, Math.min(359, hue)), 0.62f, 0.34f});
+    }
+
+    private int colorForTextHue(int hue) {
+        return Color.HSVToColor(new float[]{Math.max(0, Math.min(359, hue)), 0.58f, 0.92f});
+    }
+
+    private int hueForBackgroundColor(int color) {
+        float[] hsv = new float[3];
+        Color.colorToHSV(color, hsv);
+        return Math.max(0, Math.min(359, Math.round(hsv[0])));
+    }
+
+    private SeekBar compactColorSeekBar() {
+        SeekBar seekBar = new SeekBar(this);
+        seekBar.setPadding(dp(4), dp(2), dp(4), dp(8));
+        seekBar.setMinimumHeight(dp(40));
+        GradientDrawable progress = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{0xFF571F1F, 0xFF574D1F, 0xFF27571F, 0xFF1F5754, 0xFF1F3057, 0xFF4D1F57, 0xFF571F1F});
+        progress.setCornerRadius(dp(5));
+        progress.setSize(1, dp(10));
+        seekBar.setProgressDrawable(progress);
+        GradientDrawable thumb = new GradientDrawable();
+        thumb.setShape(GradientDrawable.OVAL);
+        thumb.setColor(0xFFF8FAFC);
+        thumb.setSize(dp(24), dp(24));
+        thumb.setStroke(dp(2), 0xFF475569);
+        seekBar.setThumb(thumb);
+        seekBar.setThumbOffset(dp(12));
+        return seekBar;
+    }
+
+    private void addOverlayPreview(LinearLayout parent) {
+        overlayPreviewStage = new FrameLayout(this);
+        overlayPreviewStage.setPadding(dp(10), dp(10), dp(10), dp(10));
+        overlayPreviewStage.setBackground(navigationPreviewBackground());
+        addPreviewRoads(overlayPreviewStage);
+
+        LinearLayout topGuide = buildPreviewTopGuide();
+        FrameLayout.LayoutParams topLp = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        topLp.setMargins(dp(6), dp(6), dp(6), 0);
+        overlayPreviewStage.addView(topGuide, topLp);
+
+        overlayPreviewPanel = buildOverlayPreviewPanel();
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER | Gravity.BOTTOM);
+        panelLp.setMargins(0, dp(66), 0, dp(12));
+        overlayPreviewStage.addView(overlayPreviewPanel, panelLp);
+
+        LinearLayout.LayoutParams stageLp = new LinearLayout.LayoutParams(-1, dp(260));
+        stageLp.setMargins(0, dp(8), 0, dp(2));
+        parent.addView(overlayPreviewStage, stageLp);
+    }
+
+    private GradientDrawable navigationPreviewBackground() {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM);
+        bg.setColors(new int[]{0xFF182436, 0xFF0B1320});
+        bg.setCornerRadius(dp(8));
+        bg.setStroke(dp(1), 0xFF1F2A3A);
+        return bg;
+    }
+
+    private void addPreviewRoads(FrameLayout stage) {
+        stage.addView(previewRoad(dp(260), dp(16), -18f, 0xFF0F8F6D),
+                roadLayout(dp(-28), dp(184), dp(360), dp(18)));
+        stage.addView(previewRoad(dp(190), dp(11), -18f, 0xFF14B88A),
+                roadLayout(dp(190), dp(204), dp(250), dp(13)));
+        stage.addView(previewRoad(dp(210), dp(9), 28f, 0xFF24364C),
+                roadLayout(dp(10), dp(116), dp(260), dp(12)));
+        stage.addView(previewRoad(dp(180), dp(8), 28f, 0xFF24364C),
+                roadLayout(dp(210), dp(98), dp(240), dp(10)));
+    }
+
+    private FrameLayout.LayoutParams roadLayout(int left, int top, int width, int height) {
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(width, height, Gravity.TOP | Gravity.LEFT);
+        lp.leftMargin = left;
+        lp.topMargin = top;
+        return lp;
+    }
+
+    private android.view.View previewRoad(int width, int height, float rotation, int color) {
+        android.view.View road = new android.view.View(this);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(color);
+        bg.setCornerRadius(height / 2f);
+        road.setBackground(bg);
+        road.setRotation(rotation);
+        road.setAlpha(0.92f);
+        return road;
+    }
+
+    private LinearLayout buildPreviewTopGuide() {
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.VERTICAL);
+        top.setPadding(dp(10), dp(8), dp(10), dp(7));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xF0000000);
+        bg.setCornerRadius(dp(8));
+        top.setBackground(bg);
+
+        TextView main = new TextView(this);
+        main.setText("\u2190 669 \u7c73  \u8fdb\u5165 \u6986\u4e61\u8def\u8f85\u8def");
+        main.setTextSize(15f);
+        main.setTextColor(Color.WHITE);
+        main.setTypeface(Typeface.DEFAULT_BOLD);
+        main.setSingleLine(true);
+        top.addView(main, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView sub = new TextView(this);
+        sub.setText("5.3\u516c\u91cc \u00b7 10\u5206\u949f                                      05:42\u5230");
+        sub.setTextSize(8.5f);
+        sub.setTextColor(0xFFD1D5DB);
+        sub.setSingleLine(true);
+        LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(-1, -2);
+        subLp.setMargins(0, dp(5), 0, 0);
+        top.addView(sub, subLp);
+        return top;
+    }
+
+    private LinearLayout buildOverlayPreviewPanel() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setGravity(Gravity.CENTER_HORIZONTAL);
+        panel.setPadding(dp(6), dp(5), dp(6), dp(5));
+        panel.setBackground(createPreviewPanelBackground());
+
+        previewModeText = new TextView(this);
+        previewModeText.setText("\u5bfc\u822a \u00b7 \u5357\u56db\u73af\u4e1c\u8def\u8f85\u8def \u00b7 39 km/h");
+        previewModeText.setTextSize(6.5f);
+        previewModeText.setTextColor(0xFFE8EAED);
+        previewModeText.setSingleLine(true);
+        panel.addView(previewModeText, new LinearLayout.LayoutParams(-2, -2));
+
+        previewTurnText = new TextView(this);
+        previewTurnText.setText("\u2190  669\u7c73\n\u8fdb\u5165 \u6986\u4e61\u8def\u8f85\u8def");
+        previewTurnText.setTextSize(15f);
+        previewTurnText.setTypeface(Typeface.DEFAULT_BOLD);
+        previewTurnText.setGravity(Gravity.CENTER);
+        previewTurnText.setTextColor(Color.WHITE);
+        previewTurnText.setPadding(dp(12), dp(4), dp(12), dp(5));
+        GradientDrawable turnBg = new GradientDrawable();
+        turnBg.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
+        turnBg.setColors(new int[]{0xFF1D4ED8, 0xFF0891B2});
+        turnBg.setCornerRadius(dp(5));
+        previewTurnText.setBackground(turnBg);
+        LinearLayout.LayoutParams turnLp = new LinearLayout.LayoutParams(-2, -2);
+        turnLp.setMargins(0, dp(3), 0, dp(3));
+        panel.addView(previewTurnText, turnLp);
+
+        previewLightRow = new LinearLayout(this);
+        previewLightRow.setOrientation(LinearLayout.HORIZONTAL);
+        previewLightRow.setGravity(Gravity.CENTER);
+        previewLightRow.addView(previewLight("\u2190 51s", 0xFFC62828));
+        previewLightRow.addView(previewLight("\u2191 18s", 0xFFC62828));
+        panel.addView(previewLightRow, new LinearLayout.LayoutParams(-2, -2));
+
+        previewLaneSection = new LinearLayout(this);
+        previewLaneSection.setOrientation(LinearLayout.VERTICAL);
+        previewLaneSection.setGravity(Gravity.CENTER_HORIZONTAL);
+        previewLaneSection.setPadding(dp(4), dp(3), dp(4), dp(4));
+
+        LaneBarView laneBar = new LaneBarView(this);
+        laneBar.setFrameScaleMultiplier(1f);
+        laneBar.setScaleMultiplier(1.5f);
+        laneBar.setLaneData(new int[]{15, 31, 18}, new boolean[]{true, false, true});
+        previewLaneSection.addView(laneBar, new LinearLayout.LayoutParams(-2, -2));
+        LinearLayout.LayoutParams laneLp = new LinearLayout.LayoutParams(-2, -2);
+        laneLp.setMargins(0, dp(3), 0, dp(2));
+        panel.addView(previewLaneSection, laneLp);
+
+        previewEtaText = new TextView(this);
+        previewEtaText.setText("5.3\u516c\u91cc \u00b7 10\u5206\u949f\n\u9884\u8ba105:42\u5230\u8fbe\n\u76ee\u7684\u5730 \u5c0f\u7ea2\u95e8\u4e61\u515a\u7fa4\u670d\u52a1\u4e2d\u5fc3");
+        previewEtaText.setTextSize(7.5f);
+        previewEtaText.setTextColor(0xFFE8EAED);
+        previewEtaText.setGravity(Gravity.CENTER);
+        panel.addView(previewEtaText, new LinearLayout.LayoutParams(-2, -2));
+
+        previewAlertText = new TextView(this);
+        previewAlertText.setText("\u9650\u901f 50  \u00b7  \u7ea2\u7eff\u706f 2\u4e2a");
+        previewAlertText.setTextSize(6.5f);
+        previewAlertText.setTextColor(0xFFFFF7ED);
+        previewAlertText.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams alertLp = new LinearLayout.LayoutParams(-2, -2);
+        alertLp.setMargins(0, dp(3), 0, 0);
+        panel.addView(previewAlertText, alertLp);
+
+        previewDetailText = new TextView(this);
+        previewDetailText.setText("\u8f66\u5934 90\u00b0\n\u9053\u8def \u4e3b\u8981\u9053\u8def");
+        previewDetailText.setTextSize(5.8f);
+        previewDetailText.setTextColor(0xFFC7D2FE);
+        previewDetailText.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-2, -2);
+        detailLp.setMargins(0, dp(2), 0, 0);
+        panel.addView(previewDetailText, detailLp);
+        return panel;
+    }
+
+    private View previewLight(String text, int color) {
+        LinearLayout view = new LinearLayout(this);
+        view.setOrientation(LinearLayout.HORIZONTAL);
+        view.setGravity(Gravity.CENTER);
+        view.setMinimumWidth(dp(56));
+        view.setMinimumHeight(dp(27));
+        view.setPadding(dp(4), dp(3), dp(7), dp(3));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
+        bg.setColors(new int[]{AppPrefs.withAlpha(color, 34), AppPrefs.withAlpha(color, 0)});
+        bg.setCornerRadius(dp(12));
+        bg.setStroke(dp(1), AppPrefs.withAlpha(color, 78));
+        view.setBackground(bg);
+
+        TextView arrow = new TextView(this);
+        arrow.setText(text.length() > 0 ? text.substring(0, 1) : "\u2191");
+        arrow.setTextSize(13f);
+        arrow.setTypeface(Typeface.DEFAULT_BOLD);
+        arrow.setTextColor(Color.WHITE);
+        arrow.setGravity(Gravity.CENTER);
+        GradientDrawable arrowBg = new GradientDrawable();
+        arrowBg.setShape(GradientDrawable.OVAL);
+        arrowBg.setColor(color);
+        arrowBg.setStroke(dp(2), 0xBBFFFFFF);
+        arrow.setBackground(arrowBg);
+        LinearLayout.LayoutParams arrowLp = new LinearLayout.LayoutParams(dp(19), dp(19));
+        arrowLp.setMargins(0, 0, dp(5), 0);
+        view.addView(arrow, arrowLp);
+
+        TextView label = new TextView(this);
+        int space = text.indexOf(' ');
+        label.setText(space >= 0 ? text.substring(space + 1) : text);
+        label.setTextSize(11.5f);
+        label.setTypeface(Typeface.DEFAULT_BOLD);
+        label.setTextColor(Color.WHITE);
+        label.setGravity(Gravity.CENTER);
+        view.addView(label, new LinearLayout.LayoutParams(-2, -2));
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(24));
+        lp.setMargins(dp(2), dp(2), dp(2), dp(2));
+        view.setLayoutParams(lp);
+        return view;
+    }
+
+    private LinearLayout card(int color) {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(14), dp(12), dp(14), dp(12));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(color);
+        bg.setCornerRadius(dp(12));
+        if (color == Color.WHITE) {
+            bg.setStroke(dp(1), 0xFFE5E7EB);
+        }
+        layout.setBackground(bg);
+        return layout;
+    }
+
+    private Button button(String text, android.view.View.OnClickListener listener, int color) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(15f);
+        b.setTextColor(Color.WHITE);
+        b.setGravity(Gravity.CENTER);
+        b.setMinimumHeight(0);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(color);
+        bg.setCornerRadius(dp(8));
+        b.setBackground(bg);
+        b.setOnClickListener(listener);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(46));
+        lp.setMargins(0, dp(9), 0, 0);
+        b.setLayoutParams(lp);
+        return b;
+    }
+
+    private TextView optionTile(String text, boolean active, int startColor, int endColor) {
+        TextView tile = new TextView(this);
+        tile.setText(text);
+        tile.setGravity(Gravity.CENTER);
+        tile.setSingleLine(true);
+        tile.setTextSize(15f);
+        tile.setTypeface(Typeface.DEFAULT_BOLD);
+        tile.setMinimumHeight(0);
+        tile.setIncludeFontPadding(false);
+        tile.setPadding(dp(8), 0, dp(8), 0);
+        styleOptionTile(tile, active, startColor, endColor);
+        return tile;
+    }
+
+    private void styleOptionTile(TextView tile, boolean active, int startColor, int endColor) {
+        tile.setSelected(active);
+        tile.setTextColor(active ? Color.WHITE : 0xFF172033);
+        GradientDrawable bg;
+        if (active) {
+            bg = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                    new int[]{startColor, endColor});
+            bg.setStroke(dp(2), AppPrefs.withAlpha(0xFFFFFFFF, 72));
+        } else {
+            bg = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                    new int[]{0xFFFFFFFF, 0xFFF1F5F9});
+            bg.setStroke(dp(1), 0xFFD7DEE8);
+        }
+        bg.setCornerRadius(dp(12));
+        tile.setBackground(bg);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            tile.setElevation(active ? dp(8) : dp(1));
+            tile.setTranslationZ(active ? dp(3) : 0f);
+        }
+    }
+
+    private SeekBar scaleSeekBar() {
+        SeekBar seekBar = new SeekBar(this);
+        seekBar.setPadding(dp(8), dp(2), dp(8), dp(8));
+        seekBar.setMinimumHeight(dp(40));
+
+        GradientDrawable track = new GradientDrawable();
+        track.setColor(0xFFE2E8F0);
+        track.setCornerRadius(dp(5));
+        track.setSize(1, dp(10));
+
+        GradientDrawable secondary = new GradientDrawable();
+        secondary.setColor(0xFFC4D1E3);
+        secondary.setCornerRadius(dp(5));
+        secondary.setSize(1, dp(10));
+
+        GradientDrawable progress = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{0xFF2563EB, 0xFF06B6D4});
+        progress.setCornerRadius(dp(5));
+        progress.setSize(1, dp(10));
+
+        LayerDrawable progressDrawable = new LayerDrawable(new Drawable[]{
+                track,
+                new ClipDrawable(secondary, Gravity.LEFT, ClipDrawable.HORIZONTAL),
+                new ClipDrawable(progress, Gravity.LEFT, ClipDrawable.HORIZONTAL)
+        });
+        progressDrawable.setId(0, android.R.id.background);
+        progressDrawable.setId(1, android.R.id.secondaryProgress);
+        progressDrawable.setId(2, android.R.id.progress);
+        progressDrawable.setLayerInset(0, 0, dp(19), 0, dp(19));
+        progressDrawable.setLayerInset(1, 0, dp(19), 0, dp(19));
+        progressDrawable.setLayerInset(2, 0, dp(19), 0, dp(19));
+        seekBar.setProgressDrawable(progressDrawable);
+
+        GradientDrawable thumb = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xFFF8FAFC, 0xFF38BDF8, 0xFF1D4ED8});
+        thumb.setShape(GradientDrawable.OVAL);
+        thumb.setSize(dp(30), dp(30));
+        thumb.setStroke(dp(2), 0xFFE0F2FE);
+        seekBar.setThumb(thumb);
+        seekBar.setThumbOffset(dp(15));
+        return seekBar;
+    }
+
+    private void addButtonPair(LinearLayout parent, Button left, Button right) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setWeightSum(2f);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+        rowLp.setMargins(0, dp(9), 0, 0);
+        row.setLayoutParams(rowLp);
+
+        row.addView(wideButton(left, 0, dp(5)));
+        if (right != null) {
+            row.addView(wideButton(right, dp(5), 0));
+        } else {
+            android.view.View spacer = new android.view.View(this);
+            LinearLayout.LayoutParams spacerLp = new LinearLayout.LayoutParams(0, 0, 1f);
+            spacerLp.setMargins(dp(5), 0, 0, 0);
+            row.addView(spacer, spacerLp);
+        }
+        parent.addView(row);
+    }
+
+    private Button wideButton(Button button, int leftMargin, int rightMargin) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(46), 1f);
+        lp.setMargins(leftMargin, 0, rightMargin, 0);
+        button.setLayoutParams(lp);
+        return button;
+    }
+
+    private void addTogglePair(LinearLayout parent, CheckBox left, CheckBox right) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setWeightSum(2f);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+        rowLp.setMargins(0, dp(2), 0, 0);
+        row.setLayoutParams(rowLp);
+
+        row.addView(wideToggle(left, 0, dp(8)));
+        if (right != null) {
+            row.addView(wideToggle(right, dp(8), 0));
+        } else {
+            android.view.View spacer = new android.view.View(this);
+            LinearLayout.LayoutParams spacerLp = new LinearLayout.LayoutParams(0, 0, 1f);
+            spacerLp.setMargins(dp(8), 0, 0, 0);
+            row.addView(spacer, spacerLp);
+        }
+        parent.addView(row);
+    }
+
+    private CheckBox wideToggle(CheckBox checkBox, int leftMargin, int rightMargin) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
+        lp.setMargins(leftMargin, 0, rightMargin, 0);
+        checkBox.setLayoutParams(lp);
+        return checkBox;
+    }
+
+    private boolean isWideLayout() {
+        return getResources().getDisplayMetrics().widthPixels >= getResources().getDisplayMetrics().heightPixels;
+    }
+
+    private void chooseTargetApp() {
+        ArrayList<AppChoice> allChoices = new ArrayList<>();
+        ArrayList<AppChoice> choices = new ArrayList<>();
+        LinearLayout dialogContent = new LinearLayout(this);
+        dialogContent.setOrientation(LinearLayout.VERTICAL);
+        dialogContent.setPadding(dp(8), 0, dp(8), 0);
+        TextView hint = new TextView(this);
+        hint.setText("\u6b63\u5728\u52a0\u8f7d\u5df2\u5b89\u88c5\u5e94\u7528\u2026");
+        hint.setTextSize(13);
+        hint.setTextColor(0xFF4B5563);
+        hint.setPadding(dp(16), dp(6), dp(16), dp(10));
+        dialogContent.addView(hint, new LinearLayout.LayoutParams(-1, -2));
+        ListView listView = new ListView(this);
+        listView.setDivider(null);
+        TargetAppAdapter adapter = new TargetAppAdapter(choices);
+        listView.setAdapter(adapter);
+        dialogContent.addView(listView, new LinearLayout.LayoutParams(-1, Math.min(dp(520), getResources().getDisplayMetrics().heightPixels / 2)));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("\u9009\u62e9\u76ee\u6807\u5e94\u7528")
+                .setNegativeButton("\u663e\u793a\u6240\u6709\u5e94\u7528", null)
+                .setView(dialogContent)
+                .create();
+        listView.setOnItemClickListener((parent, view, which, id) -> {
+            if (which < 0 || which >= choices.size()) {
+                return;
+            }
+            saveTargetPackage(choices.get(which).packageName);
+            updateTargetText();
+            startOverlayService();
+            dialog.dismiss();
+        });
+        dialog.show();
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> {
+            choices.clear();
+            choices.addAll(allChoices);
+            if (choices.isEmpty()) {
+                choices.add(new AppChoice(AppPrefs.DEFAULT_TARGET_PACKAGE, AppPrefs.DEFAULT_TARGET_PACKAGE, false, false, false, true));
+            }
+            hint.setText("\u5df2\u663e\u793a\u6240\u6709\u53ef\u89c1\u5e94\u7528\u5305\u3002");
+            adapter.notifyDataSetChanged();
+        });
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(false);
+        new Thread(() -> {
+            ArrayList<AppChoice> loadedChoices = loadTargetAppChoices();
+            ArrayList<AppChoice> filteredChoices = new ArrayList<>();
+            for (AppChoice choice : loadedChoices) {
+                if (choice.mapNamed || choice.amapPackage) {
+                    filteredChoices.add(choice);
+                }
+            }
+            boolean fallbackToAll = filteredChoices.isEmpty();
+            ArrayList<AppChoice> visibleChoices = fallbackToAll ? loadedChoices : filteredChoices;
+            if (visibleChoices.isEmpty()) {
+                visibleChoices.add(new AppChoice(AppPrefs.DEFAULT_TARGET_PACKAGE,
+                        AppPrefs.DEFAULT_TARGET_PACKAGE, false, false, false, true));
+            }
+            final ArrayList<AppChoice> result = visibleChoices;
+            runOnUiThread(() -> {
+                if (isFinishing() || !dialog.isShowing()) {
+                    return;
+                }
+                allChoices.clear();
+                allChoices.addAll(loadedChoices);
+                choices.clear();
+                choices.addAll(result);
+                hint.setText(fallbackToAll
+                        ? "\u672a\u627e\u5230 com.autonavi.* \u6216\u540d\u79f0\u5305\u542b\u201c\u5730\u56fe\u201d\u7684\u5e94\u7528\uff0c\u5df2\u663e\u793a\u6240\u6709\u53ef\u89c1\u5e94\u7528\u5305\u3002"
+                        : "\u4f18\u5148\u663e\u793a com.autonavi.* \u5305\u540d\u6216\u540d\u79f0\u5305\u542b\u201c\u5730\u56fe\u201d\u7684\u5e94\u7528\u3002");
+                adapter.notifyDataSetChanged();
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(true);
+            });
+        }, "target-app-loader").start();
+    }
+
+    private ArrayList<AppChoice> loadTargetAppChoices() {
+        PackageManager pm = getPackageManager();
+        int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PackageManager.MATCH_ALL : 0;
+        HashSet<String> launcherPackages = new HashSet<>();
+        Intent main = new Intent(Intent.ACTION_MAIN);
+        main.addCategory(Intent.CATEGORY_LAUNCHER);
+        List<ResolveInfo> resolved = pm.queryIntentActivities(main, flags);
+        HashSet<String> seen = new HashSet<>();
+        ArrayList<AppChoice> choices = new ArrayList<>();
+        for (ResolveInfo info : resolved) {
+            if (info.activityInfo == null || info.activityInfo.packageName == null) {
+                continue;
+            }
+            String pkg = info.activityInfo.packageName;
+            launcherPackages.add(pkg);
+            if (pkg.equals(getPackageName()) || !seen.add(pkg)) {
+                continue;
+            }
+            ApplicationInfo appInfo = info.activityInfo.applicationInfo;
+            String label = String.valueOf(appInfo.loadLabel(pm));
+            choices.add(new AppChoice(label, pkg, isSystemApp(appInfo), true,
+                    isMapNamedApp(label), isAmapPackage(pkg)));
+        }
+        for (ApplicationInfo appInfo : pm.getInstalledApplications(flags)) {
+            String pkg = appInfo.packageName;
+            if (pkg == null || pkg.equals(getPackageName()) || !seen.add(pkg)) {
+                continue;
+            }
+            String label = String.valueOf(appInfo.loadLabel(pm));
+            choices.add(new AppChoice(label, pkg, isSystemApp(appInfo),
+                    launcherPackages.contains(pkg), isMapNamedApp(label), isAmapPackage(pkg)));
+        }
+        sortAppChoices(choices);
+        return choices;
+    }
+
+    private boolean isSystemApp(ApplicationInfo appInfo) {
+        return (appInfo.flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
+    }
+
+    private void sortAppChoices(ArrayList<AppChoice> choices) {
+        Collections.sort(choices, Comparator
+                .comparing((AppChoice a) -> !a.amapPackage)
+                .thenComparing(a -> !a.mapNamed)
+                .thenComparing(a -> a.system)
+                .thenComparing(a -> a.label.toLowerCase(java.util.Locale.CHINA))
+                .thenComparing(a -> a.packageName));
+    }
+
+    private boolean isAmapPackage(String packageName) {
+        return packageName != null && packageName.startsWith(TARGET_PACKAGE_PREFIX);
+    }
+
+    private boolean isMapNamedApp(String label) {
+        return label != null && label.contains("\u5730\u56fe");
+    }
+
+    private void showPluginHubDialog() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(16), dp(8), dp(16), dp(4));
+
+        TextView summary = new TextView(this);
+        summary.setText(pluginEnabledSummary());
+        summary.setTextSize(13f);
+        summary.setTextColor(0xFF334155);
+        summary.setLineSpacing(dp(2), 1.0f);
+        content.addView(summary, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView hint = new TextView(this);
+        hint.setText("插件包为 .acplugin 文件，支持字体、图标资源、全局界面和悬浮窗样式。插件不执行第三方代码；旧 DIY 字体和巡航箭头仍会作为低优先级兼容层生效。");
+        hint.setTextSize(12f);
+        hint.setTextColor(0xFF64748B);
+        hint.setLineSpacing(dp(2), 1.0f);
+        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
+        hintLp.setMargins(0, dp(8), 0, 0);
+        content.addView(hint, hintLp);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("插件市场 / 本地插件")
+                .setView(content)
+                .setPositiveButton("插件市场", null)
+                .setNeutralButton("本地插件", null)
+                .setNegativeButton("导入插件", null)
+                .create();
+        pluginHubSummaryView = summary;
+        dialog.setOnDismissListener(d -> {
+            if (pluginHubSummaryView == summary) {
+                pluginHubSummaryView = null;
+            }
+        });
+        dialog.setOnShowListener(d -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> showPluginMarketDialog());
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> showInstalledPluginsDialog());
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> importPluginFromFile());
+        });
+        dialog.show();
+        FontManager.applyToViewTree(this, content);
+    }
+
+    private void refreshPluginHubSummary() {
+        if (pluginHubSummaryView != null) {
+            pluginHubSummaryView.setText(pluginEnabledSummary());
+        }
+    }
+
+    private String pluginEnabledSummary() {
+        return "当前启用\n"
+                + "字体：" + pluginEnabledName(PluginManifest.CAP_FONT) + "\n"
+                + "图标：" + pluginEnabledName(PluginManifest.CAP_ICONS) + "\n"
+                + "全局界面：" + pluginEnabledName(PluginManifest.CAP_UI) + "\n"
+                + "悬浮窗样式：" + overlayStyleDisplayName(AppPrefs.getOverlayUiStyle(this));
+    }
+
+    private String pluginEnabledName(String capability) {
+        String id = PluginManager.getEnabledPluginId(this, capability);
+        if (TextUtils.isEmpty(id)) {
+            return "未启用";
+        }
+        try {
+            PluginManifest manifest = PluginManager.activeManifest(this, capability);
+            return manifest == null ? id + "（不可用）" : manifest.name + " (" + manifest.versionName + ")";
+        } catch (Throwable ignored) {
+            return id;
+        }
+    }
+
+    private void showInstalledPluginsDialog() {
+        ArrayList<PluginManifest> plugins = PluginManager.installedPlugins(this);
+        if (plugins.isEmpty()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("本地插件")
+                    .setMessage("尚未安装插件。可以从插件市场下载，或导入 .acplugin 文件。")
+                    .setPositiveButton("导入插件", (d, w) -> importPluginFromFile())
+                    .setNegativeButton("关闭", null)
+                    .show();
+            return;
+        }
+        String[] labels = new String[plugins.size()];
+        for (int i = 0; i < plugins.size(); i++) {
+            PluginManifest plugin = plugins.get(i);
+            labels[i] = plugin.name + "  " + plugin.versionName + "\n"
+                    + plugin.displayDeveloper() + " · " + plugin.capabilityLabel();
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("本地插件（点击管理/删除）")
+                .setItems(labels, (dialog, which) -> showInstalledPluginActions(plugins.get(which)))
+                .setPositiveButton("导入插件", (d, w) -> importPluginFromFile())
+                .setNegativeButton("关闭", null)
+                .show();
+    }
+
+    private void showInstalledPluginActions(PluginManifest plugin) {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(16), dp(8), dp(16), dp(2));
+
+        TextView meta = new TextView(this);
+        meta.setText(plugin.description + "\n\n开发者：" + plugin.displayDeveloper()
+                + "\n插件 ID：" + plugin.id
+                + "\n能力：" + plugin.capabilityLabel());
+        meta.setTextSize(13f);
+        meta.setTextColor(0xFF334155);
+        meta.setLineSpacing(dp(2), 1.0f);
+        content.addView(meta, new LinearLayout.LayoutParams(-1, -2));
+
+        final AlertDialog[] holder = new AlertDialog[1];
+        if (plugin.hasCapability(PluginManifest.CAP_FONT)) {
+            content.addView(button("启用为字体插件", v -> {
+                enablePlugin(plugin, PluginManifest.CAP_FONT);
+                if (holder[0] != null) holder[0].dismiss();
+            }, 0xFF2563EB));
+        }
+        if (plugin.hasCapability(PluginManifest.CAP_ICONS)) {
+            content.addView(button("启用为图标插件", v -> {
+                enablePlugin(plugin, PluginManifest.CAP_ICONS);
+                if (holder[0] != null) holder[0].dismiss();
+            }, 0xFF0F766E));
+        }
+        if (plugin.hasCapability(PluginManifest.CAP_UI)) {
+            content.addView(button("启用为全局界面插件", v -> {
+                enablePlugin(plugin, PluginManifest.CAP_UI);
+                if (holder[0] != null) holder[0].dismiss();
+            }, 0xFF7C3AED));
+        }
+        if (plugin.hasCapability(PluginManifest.CAP_OVERLAY_STYLE)) {
+            content.addView(button("设为悬浮窗样式", v -> {
+                saveOverlayUiStyle(OverlayUiStyles.pluginStyleId(plugin.id));
+                applyOverlayPreviewStyle();
+                notifyOverlayStyleChanged();
+                refreshPluginHubSummary();
+                Toast.makeText(this, "已设为悬浮窗样式：" + plugin.name, Toast.LENGTH_SHORT).show();
+                if (holder[0] != null) holder[0].dismiss();
+            }, 0xFF9333EA));
+        }
+        content.addView(button("停用该插件的全部分类", v -> {
+            disablePlugin(plugin);
+            if (holder[0] != null) holder[0].dismiss();
+        }, 0xFF475569));
+        content.addView(button("删除插件", v -> {
+            if (holder[0] != null) holder[0].dismiss();
+            confirmDeletePlugin(plugin);
+        }, 0xFFB91C1C));
+
+        FontManager.applyToViewTree(this, content);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(plugin.name)
+                .setView(content)
+                .setNegativeButton("关闭", null)
+                .create();
+        holder[0] = dialog;
+        dialog.show();
+    }
+
+    private void enablePlugin(PluginManifest plugin, String capability) {
+        try {
+            PluginManager.setEnabledPluginId(this, capability, plugin.id);
+            notifyPluginsChanged();
+            refreshPluginHubSummary();
+            String label = PluginManifest.CAP_FONT.equals(capability) ? "字体"
+                    : PluginManifest.CAP_ICONS.equals(capability) ? "图标" : "全局界面";
+            Toast.makeText(this, "已启用" + label + "插件：" + plugin.name, Toast.LENGTH_SHORT).show();
+            if (PluginManifest.CAP_FONT.equals(capability)) {
+                recreate();
+            }
+        } catch (Throwable t) {
+            Toast.makeText(this, "启用插件失败：" + t.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void disablePlugin(PluginManifest plugin) {
+        boolean fontChanged = false;
+        boolean styleChanged = isPluginOverlayStyleSelected(plugin.id);
+        for (String capability : new String[]{PluginManifest.CAP_FONT, PluginManifest.CAP_ICONS, PluginManifest.CAP_UI}) {
+            if (plugin.id.equals(PluginManager.getEnabledPluginId(this, capability))) {
+                PluginManager.setEnabledPluginId(this, capability, "");
+                if (PluginManifest.CAP_FONT.equals(capability)) {
+                    fontChanged = true;
+                }
+            }
+        }
+        if (styleChanged) {
+            saveOverlayUiStyle(OverlayUiStyles.OLD);
+            applyOverlayPreviewStyle();
+            notifyOverlayStyleChanged();
+        }
+        notifyPluginsChanged();
+        refreshPluginHubSummary();
+        Toast.makeText(this, "已停用：" + plugin.name, Toast.LENGTH_SHORT).show();
+        if (fontChanged) {
+            recreate();
+        }
+    }
+
+    private void confirmDeletePlugin(PluginManifest plugin) {
+        new AlertDialog.Builder(this)
+                .setTitle("删除插件")
+                .setMessage("确定删除“" + plugin.name + "”？如果它正在启用，对应分类会自动停用。")
+                .setPositiveButton("删除", (dialog, which) -> {
+                    boolean fontChanged = plugin.id.equals(PluginManager.getEnabledPluginId(this, PluginManifest.CAP_FONT));
+                    boolean styleChanged = isPluginOverlayStyleSelected(plugin.id);
+                    PluginManager.deletePlugin(this, plugin.id);
+                    rebuildOverlayUiStyleChoices();
+                    if (styleChanged) {
+                        applyOverlayPreviewStyle();
+                        notifyOverlayStyleChanged();
+                    }
+                    notifyPluginsChanged();
+                    refreshPluginHubSummary();
+                    Toast.makeText(this, "已删除插件", Toast.LENGTH_SHORT).show();
+                    if (fontChanged) {
+                        recreate();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void showPluginMarketDialog() {
+        ArrayList<PluginRepository.MarketPlugin> plugins = new ArrayList<>();
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(8), 0, dp(8), 0);
+        TextView hint = new TextView(this);
+        hint.setText("正在加载插件市场…\n" + PluginRepository.marketUrl(this));
+        hint.setTextSize(12f);
+        hint.setTextColor(0xFF64748B);
+        hint.setPadding(dp(16), dp(6), dp(16), dp(10));
+        content.addView(hint, new LinearLayout.LayoutParams(-1, -2));
+        ListView list = new ListView(this);
+        list.setDivider(null);
+        PluginMarketAdapter adapter = new PluginMarketAdapter(plugins);
+        list.setAdapter(adapter);
+        content.addView(list, new LinearLayout.LayoutParams(-1, Math.min(dp(520), getResources().getDisplayMetrics().heightPixels / 2)));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("插件市场")
+                .setView(content)
+                .setNegativeButton("关闭", null)
+                .create();
+        list.setOnItemClickListener((parent, view, position, id) -> {
+            if (position >= 0 && position < plugins.size()) {
+                confirmInstallMarketPlugin(plugins.get(position));
+            }
+        });
+        dialog.show();
+        new Thread(() -> {
+            try {
+                ArrayList<PluginRepository.MarketPlugin> fetched = PluginRepository.fetchMarket(this);
+                runOnUiThread(() -> {
+                    if (isFinishing() || !dialog.isShowing()) {
+                        return;
+                    }
+                    plugins.clear();
+                    plugins.addAll(fetched);
+                    hint.setText(fetched.isEmpty() ? "市场暂无可用插件。" : "点击插件可下载并安装。");
+                    adapter.notifyDataSetChanged();
+                });
+            } catch (Throwable t) {
+                runOnUiThread(() -> {
+                    if (!isFinishing() && dialog.isShowing()) {
+                        hint.setText("插件市场加载失败：" + t.getMessage());
+                    }
+                });
+            }
+        }, "plugin-market-loader").start();
+    }
+
+    private void confirmInstallMarketPlugin(PluginRepository.MarketPlugin plugin) {
+        new AlertDialog.Builder(this)
+                .setTitle(plugin.name)
+                .setMessage(plugin.description + "\n\n开发者：" + (TextUtils.isEmpty(plugin.developerName) ? "未知开发者" : plugin.developerName)
+                        + "\n能力：" + plugin.capabilitiesLabel
+                        + "\n版本：" + plugin.versionName
+                        + "\n大小：" + formatBytes(plugin.size))
+                .setPositiveButton("安装/更新", (dialog, which) -> installMarketPlugin(plugin))
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void installMarketPlugin(PluginRepository.MarketPlugin plugin) {
+        Toast.makeText(this, "正在下载插件…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                PluginManifest installed = PluginRepository.downloadAndInstall(this, plugin);
+                runOnUiThread(() -> {
+                    rebuildOverlayUiStyleChoices();
+                    Toast.makeText(this, "插件已安装：" + installed.name, Toast.LENGTH_SHORT).show();
+                    showInstalledPluginActions(installed);
+                });
+            } catch (Throwable t) {
+                runOnUiThread(() -> Toast.makeText(this, "安装插件失败：" + t.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        }, "plugin-market-installer").start();
+    }
+
+    private void importPluginFromFile() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        try {
+            startActivityForResult(intent, REQUEST_IMPORT_PLUGIN);
+        } catch (Throwable t) {
+            Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
+            fallback.addCategory(Intent.CATEGORY_OPENABLE);
+            fallback.setType("*/*");
+            startActivityForResult(fallback, REQUEST_IMPORT_PLUGIN);
+        }
+    }
+
+    private void installImportedPlugin(Uri uri) {
+        Toast.makeText(this, "正在导入插件…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                PluginManifest installed = PluginManager.installFromUri(this, uri, false);
+                runOnUiThread(() -> {
+                    rebuildOverlayUiStyleChoices();
+                    Toast.makeText(this, "插件已导入：" + installed.name, Toast.LENGTH_SHORT).show();
+                    showInstalledPluginActions(installed);
+                });
+            } catch (Throwable t) {
+                runOnUiThread(() -> Toast.makeText(this, "导入插件失败：" + t.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        }, "plugin-importer").start();
+    }
+
+    private String formatBytes(long bytes) {
+        if (bytes <= 0) {
+            return "未知";
+        }
+        if (bytes < 1024) {
+            return bytes + "B";
+        }
+        if (bytes < 1024 * 1024) {
+            return String.format(java.util.Locale.US, "%.1fKB", bytes / 1024f);
+        }
+        return String.format(java.util.Locale.US, "%.1fMB", bytes / 1024f / 1024f);
+    }
+
+    private void startOverlayService() {
+        if (!Settings.canDrawOverlays(this)) {
+            new AlertDialog.Builder(this)
+                    .setTitle("\u60ac\u6d6e\u7a97\u6743\u9650")
+                    .setMessage("\u4f34\u4fa3\u670d\u52a1\u9700\u8981\u60ac\u6d6e\u7a97\u6743\u9650\uff0c\u8bf7\u5728\u63a5\u4e0b\u6765\u7684\u754c\u9762\u4e2d\u5141\u8bb8\u201c\u663e\u793a\u5728\u5176\u4ed6\u5e94\u7528\u7684\u4e0a\u5c42\u201d\u3002")
+                    .setPositiveButton("\u53bb\u8bbe\u7f6e", (d, w) -> {
+                        try {
+                            startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:" + getPackageName())));
+                        } catch (Throwable ignored) {}
+                    })
+                    .setNegativeButton("\u53d6\u6d88", null)
+                    .show();
+            return;
+        }
+        startOverlayService(this);
+    }
+
+    static void startOverlayService(Context context) {
+        Intent intent = new Intent(context, OverlayService.class);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Context.class.getMethod("startForegroundService", Intent.class).invoke(context, intent);
+            } else {
+                context.startService(intent);
+            }
+        } catch (Throwable foregroundError) {
+            try {
+                context.startService(intent);
+            } catch (Throwable fallbackError) {
+                Log.e(TAG, "start overlay service failed", fallbackError);
+            }
+        }
+    }
+
+    private void startCompanionService() {
+        startCompanionService(true);
+    }
+
+    private void startCompanionService(boolean showToast) {
+        if (!AppPrefs.isMainOverlayEnabled(this)
+                && !AppPrefs.isClusterMirrorEnabled(this)
+                && !AppPrefs.isShowMainWhenTargetForegroundEnabled(this)) {
+            if (showToast) {
+                Toast.makeText(this, "\u8bf7\u5148\u52fe\u9009\u4e3b\u5c4f\u60ac\u6d6e\u7a97\u3001\u526f\u5c4f\u60ac\u6d6e\u7a97\u6216\u9ad8\u5fb7\u5e7f\u64ad\u81ea\u52a8\u663e\u793a", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        startOverlayService();
+        notifyMainOverlayChanged();
+        notifyClusterMirrorChanged();
+        if (showToast) {
+            Toast.makeText(this, "\u5df2\u6309\u9009\u9879\u542f\u52a8\u4f34\u4fa3\u670d\u52a1", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void stopCompanionService() {
+        saveBehaviorEnabled(AppPrefs.KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND, false);
+        Intent stopIntent = new Intent(this, OverlayService.class);
+        stopIntent.setAction(OverlayService.ACTION_STOP_SERVICE);
+        try {
+            startService(stopIntent);
+        } catch (Throwable ignored) {
+            stopService(new Intent(this, OverlayService.class));
+        }
+        Toast.makeText(this, "\u5df2\u5173\u95ed\u4f34\u4fa3\u670d\u52a1", Toast.LENGTH_SHORT).show();
+    }
+
+    private void requestOverlayPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
+            intent.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(intent);
+        }
+    }
+
+    private void openTargetApp() {
+        Intent launch = getPackageManager().getLaunchIntentForPackage(AppPrefs.getTargetPackage(this));
+        if (launch != null) {
+            startActivity(launch);
+        }
+    }
+
+    private void openDiagnosticCenter() {
+        startActivity(new Intent(this, DiagnosticActivity.class));
+    }
+
+    private boolean redirectDesktopLaunchToTarget(Intent sourceIntent) {
+        if (sourceIntent != null && sourceIntent.getBooleanExtra(EXTRA_OPEN_SETTINGS, false)) {
+            clearPendingDesktopLaunch();
+            return false;
+        }
+        if (!AppPrefs.isLaunchTargetFromDesktopEnabled(this)) {
+            clearPendingDesktopLaunch();
+            return false;
+        }
+        if (sourceIntent == null
+                || !Intent.ACTION_MAIN.equals(sourceIntent.getAction())
+                || !sourceIntent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+            return false;
+        }
+        Intent launch = getPackageManager().getLaunchIntentForPackage(AppPrefs.getTargetPackage(this));
+        if (launch == null) {
+            clearPendingDesktopLaunch();
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        SharedPreferences prefs = getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE);
+        long lastLaunchAt = prefs.getLong(KEY_LAST_DESKTOP_LAUNCH_AT, 0L);
+        if (lastLaunchAt > 0L
+                && now >= lastLaunchAt
+                && now - lastLaunchAt <= DOUBLE_DESKTOP_LAUNCH_WINDOW_MS) {
+            clearPendingDesktopLaunch();
+            return false;
+        }
+        prefs.edit().putLong(KEY_LAST_DESKTOP_LAUNCH_AT, now).commit();
+        if (AppPrefs.isMainOverlayEnabled(this)
+                || AppPrefs.isClusterMirrorEnabled(this)
+                || AppPrefs.isShowMainWhenTargetForegroundEnabled(this)) {
+            startOverlayService(this);
+        }
+        startActivity(launch);
+        finish();
+        return true;
+    }
+
+    private void clearPendingDesktopLaunch() {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .remove(KEY_LAST_DESKTOP_LAUNCH_AT)
+                .commit();
+    }
+
+    private void chooseClusterDisplay() {
+        ArrayList<DisplayChoice> choices = getClusterDisplayChoices();
+        String[] labels = new String[choices.size() + 1];
+        labels[0] = "\u81ea\u52a8\u9009\u62e9\n\u4f18\u5148\u4f7f\u7528\u7cfb\u7edf\u8ba4\u5b9a\u7684\u526f\u5c4f";
+        for (int i = 0; i < choices.size(); i++) {
+            DisplayChoice choice = choices.get(i);
+            labels[i + 1] = choice.label + "\nID " + choice.displayId;
+        }
+        int currentId = AppPrefs.getClusterDisplayId(this);
+        int checked = 0;
+        for (int i = 0; i < choices.size(); i++) {
+            if (choices.get(i).displayId == currentId) {
+                checked = i + 1;
+                break;
+            }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("\u9009\u62e9\u6295\u5c4f\u5c4f\u5e55")
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    saveClusterDisplayId(which == 0 ? -1 : choices.get(which - 1).displayId);
+                    updateClusterDisplayText();
+                    startOverlayService();
+                    notifyClusterMirrorChanged();
+                    dialog.dismiss();
+                })
+                .setNegativeButton("\u53d6\u6d88", null)
+                .show();
+    }
+
+    private void openUrl(String url) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            startActivity(intent);
+        } catch (Throwable t) {
+            Toast.makeText(this, "\u65e0\u6cd5\u6253\u5f00\u94fe\u63a5", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void showLogcatDialog() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(8), 0, dp(8), 0);
+
+        TextView hint = new TextView(this);
+        hint.setText("\u53cd\u9988 bug \u65f6\u53ef\u63d0\u4ea4\u65e5\u5fd7\u3002\u4f18\u5148\u4fdd\u5b58\u5230 /sdcard/" + LogCollector.PUBLIC_LOG_DIR + "\uff1b\u82e5\u7cfb\u7edf\u4e0d\u6388\u6743\uff0c\u4f1a\u81ea\u52a8\u56de\u9000\u5230\u5e94\u7528\u79c1\u6709\u65e5\u5fd7\u76ee\u5f55\u3002");
+        hint.setTextSize(13);
+        hint.setTextColor(0xFF4B5563);
+        hint.setPadding(dp(16), dp(6), dp(16), dp(10));
+        content.addView(hint, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView logText = new TextView(this);
+        logText.setTextSize(11);
+        logText.setTextColor(0xFF111827);
+        logText.setTypeface(Typeface.MONOSPACE);
+        logText.setTextIsSelectable(true);
+        logText.setLineSpacing(0, 1.05f);
+        logText.setPadding(dp(10), dp(10), dp(10), dp(10));
+        GradientDrawable logBg = new GradientDrawable();
+        logBg.setColor(0xFFF8FAFC);
+        logBg.setStroke(dp(1), 0xFFE2E8F0);
+        logBg.setCornerRadius(dp(8));
+        logText.setBackground(logBg);
+        ScrollView logScroll = new ScrollView(this);
+        logScroll.addView(logText, new ScrollView.LayoutParams(-1, -2));
+        content.addView(logScroll, new LinearLayout.LayoutParams(-1, Math.min(dp(520), getResources().getDisplayMetrics().heightPixels / 2)));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(-1, -2);
+        actionsLp.setMargins(0, dp(6), 0, 0);
+        content.addView(actions, actionsLp);
+
+        LinearLayout permissionRow = new LinearLayout(this);
+        permissionRow.setOrientation(LinearLayout.HORIZONTAL);
+        permissionRow.setWeightSum(2f);
+        actions.addView(permissionRow, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout operationRow = new LinearLayout(this);
+        operationRow.setOrientation(LinearLayout.HORIZONTAL);
+        operationRow.setWeightSum(3f);
+        actions.addView(operationRow, new LinearLayout.LayoutParams(-1, -2));
+
+        Button grantLogs = compactDialogButton("\u65e5\u5fd7\u6743\u9650");
+        Button grantStorage = compactDialogButton("\u5b58\u50a8\u6743\u9650");
+        Button refresh = compactDialogButton("\u5237\u65b0");
+        Button save = compactDialogButton("\u4fdd\u5b58");
+        Button copy = compactDialogButton("\u590d\u5236");
+        permissionRow.addView(grantLogs, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        permissionRow.addView(grantStorage, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        operationRow.addView(refresh, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        operationRow.addView(save, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        operationRow.addView(copy, new LinearLayout.LayoutParams(0, dp(42), 1f));
+
+        FontManager.applyToViewTree(this, content);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("\u65e5\u5fd7\u4e0e\u8c03\u8bd5")
+                .setView(content)
+                .setPositiveButton("\u5173\u95ed", null)
+                .create();
+
+        grantLogs.setOnClickListener(v -> requestReadLogsPermission(true));
+        grantStorage.setOnClickListener(v -> requestStoragePermission(true));
+        refresh.setOnClickListener(v -> refreshLogcat(logText, logScroll));
+        save.setOnClickListener(v -> saveLogText(String.valueOf(logText.getText())));
+        copy.setOnClickListener(v -> copyLogText(String.valueOf(logText.getText())));
+        dialog.setOnShowListener(d -> {
+            refreshLogcat(logText, logScroll);
+        });
+        dialog.show();
+    }
+
+    private Button compactDialogButton(String text) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(13);
+        b.setTextColor(0xFF1F2937);
+        return b;
+    }
+
+    private void requestReadLogsPermission(boolean showSummary) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (checkSelfPermission(Manifest.permission.READ_LOGS) != PackageManager.PERMISSION_GRANTED) {
+                try {
+                    requestPermissions(new String[]{Manifest.permission.READ_LOGS}, REQUEST_READ_LOGS_PERMISSION);
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        if (showSummary) {
+            String logs = LogCollector.hasPermission(this, Manifest.permission.READ_LOGS)
+                    ? "READ_LOGS 已授权"
+                    : "READ_LOGS 未授权；普通系统通常需要 shell/系统权限才会放行";
+            Toast.makeText(this, logs, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void requestStoragePermission(boolean openSettings) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            ArrayList<String> permissions = new ArrayList<>();
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P
+                    && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+            }
+            if (Build.VERSION.SDK_INT <= 32
+                    && checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+            }
+            if (!permissions.isEmpty()) {
+                try {
+                    requestPermissions(permissions.toArray(new String[0]), REQUEST_STORAGE_PERMISSIONS);
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        if (openSettings && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            try {
+                Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                intent.setData(Uri.parse("package:" + getPackageName()));
+                startActivity(intent);
+            } catch (Throwable t) {
+                try {
+                    startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+                } catch (Throwable ignored) {
+                    Toast.makeText(this, "\u65e0\u6cd5\u6253\u5f00\u6240\u6709\u6587\u4ef6\u8bbf\u95ee\u6743\u9650\u8bbe\u7f6e", Toast.LENGTH_SHORT).show();
+                }
+            }
+            Toast.makeText(this, "\u8bf7\u5f00\u542f\u201c\u6240\u6709\u6587\u4ef6\u8bbf\u95ee\u6743\u9650\u201d\uff0c\u7528\u4e8e\u4fdd\u5b58\u5230 /sdcard/" + LogCollector.PUBLIC_LOG_DIR, Toast.LENGTH_LONG).show();
+        } else if (openSettings) {
+            Toast.makeText(this, storagePermissionSummary(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void refreshLogcat(TextView logText, ScrollView logScroll) {
+        logText.setText("\u6b63\u5728\u8bfb\u53d6 logcat...");
+        new Thread(() -> {
+            String text = LogCollector.collectLogcat(this);
+            runOnUiThread(() -> {
+                logText.setText(text);
+                logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+            });
+        }, "amap-logcat-reader").start();
+    }
+
+    private void saveLogText(String text) {
+        try {
+            LogCollector.SaveResult result = LogCollector.saveLog(this, text);
+            if (result.fallback) {
+                Toast.makeText(this, "\u65e0\u6cd5\u5199\u5165 /sdcard/" + LogCollector.PUBLIC_LOG_DIR
+                        + "\uff0c\u5df2\u56de\u9000\u5230\uff1a" + result.file.getParent(), Toast.LENGTH_LONG).show();
+            }
+            Toast.makeText(this, "\u65e5\u5fd7\u5df2\u4fdd\u5b58\uff1a" + result.file.getAbsolutePath()
+                    + "\n\u53cd\u9988 bug \u65f6\u53ef\u63d0\u4ea4\u8be5\u6587\u4ef6", Toast.LENGTH_LONG).show();
+        } catch (Throwable t) {
+            Toast.makeText(this, "\u4fdd\u5b58\u65e5\u5fd7\u5931\u8d25\uff1a" + t.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private String storagePermissionSummary() {
+        return LogCollector.storagePermissionSummary(this);
+    }
+
+    private void copyLogText(String text) {
+        ClipboardManager manager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (manager == null) {
+            Toast.makeText(this, "\u590d\u5236\u5931\u8d25", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        manager.setPrimaryClip(ClipData.newPlainText("AMap Companion log", text));
+        Toast.makeText(this, "\u65e5\u5fd7\u5df2\u590d\u5236", Toast.LENGTH_SHORT).show();
+    }
+
+    private void chooseDownloadSource(String title, String githubUrl, String mirrorUrl) {
+        String[] labels = {
+                "\u955c\u50cf\u7ad9\uff08\u4e0b\u8f7d ZIP\uff0c\u5feb\uff09\n" + mirrorUrl,
+                "GitHub \u539f\u7ad9\uff08\u53ef\u80fd\u8f83\u6162\uff09\n" + githubUrl
+        };
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setItems(labels, (dialog, which) -> {
+                    if (which == 0) {
+                        openUrl(mirrorUrl);
+                    } else {
+                        openUrl(githubUrl);
+                    }
+                })
+                .show();
+    }
+
+    private void chooseUpdateChannel() {
+        showIntegratedBuildInfo();
+    }
+
+    private void updateTargetText() {
+        if (targetText != null) {
+            targetText.setText("\u76ee\u6807\u5e94\u7528\uff08\u5df2\u9501\u5b9a\u4e3a\u5f53\u524d\u9ad8\u5fb7\uff09\n" + AppPrefs.getTargetPackage(this));
+        }
+    }
+
+    private void showLockedTargetInfo() {
+        new AlertDialog.Builder(this)
+                .setTitle("\u76ee\u6807\u5df2\u9501\u5b9a")
+                .setMessage("\u8fd9\u662f\u96c6\u6210\u5230\u9ad8\u5fb7 APK \u5185\u7684\u7248\u672c\uff0c\u76ee\u6807\u5e94\u7528\u56fa\u5b9a\u4e3a\u5f53\u524d\u9ad8\u5fb7\u5305\uff1a\n\n" + getPackageName())
+                .setPositiveButton("\u77e5\u9053\u4e86", null)
+                .show();
+    }
+
+    private void showIntegratedBuildInfo() {
+        updateUpdateText("\u96c6\u6210\u7248\n\u5df2\u79fb\u9664 APK \u66f4\u65b0/\u4e0b\u8f7d\u529f\u80fd");
+        new AlertDialog.Builder(this)
+                .setTitle("\u96c6\u6210\u7248\u8bf4\u660e")
+                .setMessage("\u8fd9\u4e2a\u7248\u672c\u5df2\u628a AMap Companion \u6574\u5408\u5230\u5f53\u524d\u9ad8\u5fb7\u8fdb\u7a0b\u5185\u3002\n\n"
+                        + "\u4fdd\u7559\uff1a\u60ac\u6d6e\u7a97\u3001\u8bbe\u7f6e\u3001\u8bca\u65ad\u3001\u63d2\u4ef6\u5e02\u573a\u548c\u5e7f\u64ad\u56de\u653e\u3002\n"
+                        + "\u79fb\u9664\uff1aAPK \u66f4\u65b0\u3001\u5df2\u6539\u9ad8\u5fb7\u4e0b\u8f7d\u548c\u5b89\u88c5\u5668\u5165\u53e3\u3002")
+                .setPositiveButton("\u77e5\u9053\u4e86", null)
+                .show();
+    }
+
+    private void checkForUpdates(boolean manual) {
+        showIntegratedBuildInfo();
+    }
+
+    private void handleUpdateInfo(Object info, boolean manual) {
+        showIntegratedBuildInfo();
+    }
+
+    private void showUpdateDetail(Object info) {
+        showIntegratedBuildInfo();
+    }
+
+    private void installUpdate(Object info) {
+        showIntegratedBuildInfo();
+    }
+
+    private void updateUpdateText(String text) {
+        if (updateText != null) {
+            updateText.setText(text);
+        }
+    }
+
+    private void saveTargetPackage(String packageName) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(AppPrefs.KEY_TARGET_PACKAGE, getPackageName())
+                .apply();
+    }
+
+    private void saveUpdateUrl(String url) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(KEY_UPDATE_URL, TextUtils.isEmpty(url) ? DEFAULT_UPDATE_URL : url)
+                .apply();
+    }
+
+    private void saveUpdateChannel(String channel) {
+        String normalized = UPDATE_CHANNEL_GITHUB.equals(channel) ? UPDATE_CHANNEL_GITHUB : UPDATE_CHANNEL_SERVER;
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(KEY_UPDATE_CHANNEL, normalized)
+                .putString(KEY_UPDATE_URL, channelToUpdateUrl(normalized))
+                .apply();
+    }
+
+    private void persistDefaultUpdateUrl() {
+        SharedPreferences prefs = getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE);
+        String channel = prefs.getString(KEY_UPDATE_CHANNEL, DEFAULT_UPDATE_CHANNEL);
+        if (!UPDATE_CHANNEL_GITHUB.equals(channel)) {
+            channel = UPDATE_CHANNEL_SERVER;
+        }
+        prefs.edit()
+                .putString(KEY_UPDATE_CHANNEL, channel)
+                .putString(KEY_UPDATE_URL, channelToUpdateUrl(channel))
+                .apply();
+    }
+
+    private String getUpdateUrl() {
+        return channelToUpdateUrl(getUpdateChannel());
+    }
+
+    private String getUpdateChannel() {
+        SharedPreferences prefs = getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE);
+        String channel = prefs.getString(KEY_UPDATE_CHANNEL, DEFAULT_UPDATE_CHANNEL);
+        if (UPDATE_CHANNEL_GITHUB.equals(channel)) {
+            return UPDATE_CHANNEL_GITHUB;
+        }
+        String legacyUrl = prefs.getString(KEY_UPDATE_URL, DEFAULT_UPDATE_URL);
+        if (GITHUB_UPDATE_URL.equals(legacyUrl)) {
+            return UPDATE_CHANNEL_GITHUB;
+        }
+        return UPDATE_CHANNEL_SERVER;
+    }
+
+    private String channelToUpdateUrl(String channel) {
+        return UPDATE_CHANNEL_GITHUB.equals(channel) ? GITHUB_UPDATE_URL : SERVER_UPDATE_URL;
+    }
+
+    private String displayUpdateUrl() {
+        return "\u96c6\u6210\u7248\u4e0d\u63d0\u4f9b APK \u66f4\u65b0/\u4e0b\u8f7d";
+    }
+
+    private void saveOverlayScalePercent(int percent) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(AppPrefs.KEY_OVERLAY_SCALE_PERCENT, AppPrefs.clampOverlayScalePercent(percent))
+                .apply();
+    }
+
+    private void updateOverlayScaleText(int percent) {
+        if (overlayScaleText != null) {
+            overlayScaleText.setText("\u60ac\u6d6e\u7a97\u5927\u5c0f " + AppPrefs.clampOverlayScalePercent(percent) + "%");
+        }
+        updateOverlayPreviewScale(percent);
+    }
+
+    private void updateOverlayPreviewScale(int percent) {
+        if (overlayPreviewPanel == null || overlayPreviewStage == null) {
+            return;
+        }
+        float scale = AppPrefs.clampOverlayScalePercent(percent) / 100f;
+        overlayPreviewPanel.setScaleX(scale);
+        overlayPreviewPanel.setScaleY(scale);
+        FrameLayout.LayoutParams panelLp = (FrameLayout.LayoutParams) overlayPreviewPanel.getLayoutParams();
+        panelLp.gravity = Gravity.CENTER;
+        overlayPreviewPanel.setLayoutParams(panelLp);
+
+        LinearLayout.LayoutParams stageLp = (LinearLayout.LayoutParams) overlayPreviewStage.getLayoutParams();
+        stageLp.height = Math.max(dp(210), Math.round(dp(260) * scale));
+        overlayPreviewStage.setLayoutParams(stageLp);
+    }
+
+    private CheckBox contentToggle(String text, String key) {
+        CheckBox checkBox = new CheckBox(this);
+        checkBox.setText(text);
+        checkBox.setChecked(AppPrefs.isOverlayContentEnabled(this, key));
+        checkBox.setTextSize(14f);
+        checkBox.setTextColor(0xFF0F172A);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            checkBox.setButtonTintList(android.content.res.ColorStateList.valueOf(0xFF2563EB));
+        }
+        checkBox.setPadding(0, dp(2), 0, dp(2));
+        checkBox.setOnCheckedChangeListener((CompoundButton buttonView, boolean isChecked) -> {
+            saveOverlayContentEnabled(key, isChecked);
+            updateOverlayPreviewContentVisibility();
+            notifyOverlayContentChanged();
+        });
+        return checkBox;
+    }
+
+    private CheckBox behaviorToggle(String text, String key) {
+        CheckBox checkBox = new CheckBox(this);
+        checkBox.setText(text);
+        checkBox.setChecked(AppPrefs.isBehaviorEnabled(this, key));
+        checkBox.setTextSize(14f);
+        checkBox.setTextColor(0xFF0F172A);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            checkBox.setButtonTintList(android.content.res.ColorStateList.valueOf(0xFF2563EB));
+        }
+        checkBox.setPadding(0, dp(2), 0, dp(2));
+        checkBox.setOnCheckedChangeListener((CompoundButton buttonView, boolean isChecked) -> {
+            saveBehaviorEnabled(key, isChecked);
+            if (AppPrefs.KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND.equals(key)
+                    && isChecked && !AppPrefs.hasUsageStatsAccess(this)) {
+                Toast.makeText(this,
+                        "将优先使用高德前后台广播；使用情况访问权限仅作为兼容回退",
+                        Toast.LENGTH_LONG).show();
+            }
+            if (isChecked) {
+                if (AppPrefs.KEY_START_SERVICE_ON_APP_OPEN.equals(key)) {
+                    startCompanionService(false);
+                } else {
+                    startOverlayService();
+                }
+            }
+            notifyDisplayPolicyChanged();
+            if (!isChecked) {
+                stopServiceIfNoVisuals();
+            }
+        });
+        return checkBox;
+    }
+
+    private CheckBox overlayTargetToggle(String text, String key) {
+        CheckBox checkBox = new CheckBox(this);
+        checkBox.setText(text);
+        checkBox.setChecked(AppPrefs.KEY_CLUSTER_MIRROR_ENABLED.equals(key)
+                ? AppPrefs.isClusterMirrorEnabled(this)
+                : AppPrefs.isMainOverlayEnabled(this));
+        checkBox.setTextSize(14f);
+        checkBox.setTextColor(0xFF0F172A);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            checkBox.setButtonTintList(android.content.res.ColorStateList.valueOf(0xFF2563EB));
+        }
+        checkBox.setPadding(0, dp(2), 0, dp(2));
+        checkBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (AppPrefs.KEY_CLUSTER_MIRROR_ENABLED.equals(key)) {
+                saveClusterMirrorEnabled(isChecked);
+                if (isChecked) {
+                    startOverlayService();
+                }
+                notifyClusterMirrorChanged();
+            } else {
+                saveMainOverlayEnabled(isChecked);
+                if (isChecked) {
+                    startOverlayService();
+                }
+                notifyMainOverlayChanged();
+            }
+            stopServiceIfNoVisuals();
+        });
+        return checkBox;
+    }
+
+    private void openUsageAccessSettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS));
+        } catch (Throwable t) {
+            Toast.makeText(this, "无法打开使用情况访问设置", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void saveOverlayContentEnabled(String key, boolean enabled) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(key, enabled)
+                .apply();
+    }
+
+    private void saveBehaviorEnabled(String key, boolean enabled) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(key, enabled)
+                .apply();
+    }
+
+    private void updateOverlayPreviewContentVisibility() {
+        updatePreviewEtaText();
+        setPreviewVisibility(previewModeText, AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_MODE));
+        setPreviewVisibility(previewTurnText, AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_TURN));
+        setPreviewVisibility(previewLightRow, AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_LIGHT));
+        setPreviewVisibility(previewLaneSection, AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_LANE));
+        setPreviewVisibility(previewEtaText,
+                AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_ETA)
+                        || AppPrefs.shouldShowDestination(this));
+        setPreviewVisibility(previewAlertText, AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_ALERT));
+        setPreviewVisibility(previewDetailText, AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_DETAIL));
+    }
+
+    private void applyOverlayPreviewStyle() {
+        updateOverlayPreviewContentVisibility();
+        applyOverlayPreviewPanelStyle();
+        applyOverlayPreviewTextStyle();
+        if (overlayUiStyleButton != null) {
+            overlayUiStyleButton.setText(overlayUiStyleButtonText());
+        }
+        if (overlayTextModeButton != null) {
+            overlayTextModeButton.setText(textModeButtonText());
+        }
+        updateBackgroundOpacityText(AppPrefs.getBackgroundOpacityPercent(this));
+    }
+
+    private void updatePreviewEtaText() {
+        if (previewEtaText == null) {
+            return;
+        }
+        StringBuilder text = new StringBuilder();
+        if (AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_ETA)) {
+            text.append("5.3\u516c\u91cc \u00b7 10\u5206\u949f\n\u9884\u8ba105:42\u5230\u8fbe");
+        }
+        if (AppPrefs.shouldShowDestination(this)) {
+            if (text.length() > 0) {
+                text.append('\n');
+            }
+            text.append("\u76ee\u7684\u5730 \u5c0f\u7ea2\u95e8\u4e61\u515a\u7fa4\u670d\u52a1\u4e2d\u5fc3");
+        }
+        previewEtaText.setText(text.toString());
+    }
+
+    private void applyOverlayPreviewPanelStyle() {
+        if (overlayPreviewPanel != null) {
+            overlayPreviewPanel.setBackground(createPreviewPanelBackground());
+        }
+    }
+
+    private void applyOverlayPreviewTextStyle() {
+        int primary = previewPrimaryTextColor();
+        int alert = previewAlertTextColor();
+        int detail = previewDetailTextColor();
+        if (previewModeText != null) {
+            previewModeText.setTextColor(primary);
+        }
+        if (previewEtaText != null) {
+            previewEtaText.setTextColor(primary);
+        }
+        if (previewAlertText != null) {
+            previewAlertText.setTextColor(alert);
+        }
+        if (previewDetailText != null) {
+            previewDetailText.setTextColor(detail);
+        }
+    }
+
+    private GradientDrawable createPreviewPanelBackground() {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(7));
+        int opacity = AppPrefs.getBackgroundOpacityPercent(this);
+        bg.setColor(AppPrefs.withAlpha(AppPrefs.getBackgroundColor(this), opacity));
+        bg.setStroke(dp(1), AppPrefs.withAlpha(0xFFFFFFFF, AppPrefs.strokeOpacityForBackground(opacity)));
+        return bg;
+    }
+
+    private String textModeButtonText() {
+        return AppPrefs.isAutoTextMode(this)
+                ? "\u6587\u5b57\u6a21\u5f0f\uff1a\u81ea\u52a8\uff08\u6839\u636e\u900f\u660e\u5ea6\u81ea\u52a8\u5207\u6362\uff09"
+                : "\u6587\u5b57\u6a21\u5f0f\uff1a\u6d45\u8272";
+    }
+
+    private String overlayUiStyleButtonText() {
+        return "悬浮窗样式：" + overlayStyleDisplayName(AppPrefs.getOverlayUiStyle(this));
+    }
+
+    private void chooseOverlayUiStyle() {
+        String currentStyle = AppPrefs.getOverlayUiStyle(this);
+        ArrayList<OverlayStyleChoice> choices = overlayStyleChoices();
+        String[] labels = new String[choices.size()];
+        int checked = 0;
+        for (int i = 0; i < choices.size(); i++) {
+            OverlayStyleChoice choice = choices.get(i);
+            labels[i] = choice.label;
+            if (choice.id.equals(currentStyle)) {
+                checked = i;
+            }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("选择悬浮窗样式")
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    String style = choices.get(which).id;
+                    saveOverlayUiStyle(style);
+                    applyOverlayPreviewStyle();
+                    notifyOverlayStyleChanged();
+                    dialog.dismiss();
+                })
+                .setNegativeButton("\u53d6\u6d88", null)
+                .show();
+    }
+
+    private ArrayList<OverlayStyleChoice> overlayStyleChoices() {
+        ArrayList<OverlayStyleChoice> choices = new ArrayList<>();
+        for (OverlayUiStyles.Style style : OverlayUiStyles.ALL) {
+            choices.add(new OverlayStyleChoice(style.id, shortOverlayStyleLabel(style)));
+        }
+        ArrayList<PluginManifest> plugins = PluginManager.installedPlugins(this);
+        for (PluginManifest plugin : plugins) {
+            if (plugin.hasCapability(PluginManifest.CAP_OVERLAY_STYLE)) {
+                choices.add(new OverlayStyleChoice(
+                        OverlayUiStyles.pluginStyleId(plugin.id),
+                        "插件：" + plugin.name + "（" + plugin.versionName + "）"));
+            }
+        }
+        return choices;
+    }
+
+    private String shortOverlayStyleLabel(OverlayUiStyles.Style style) {
+        if (OverlayUiStyles.OLD.equals(style.id)) return "经典";
+        if (OverlayUiStyles.CARD.equals(style.id)) return "卡片";
+        if (OverlayUiStyles.DYNAMIC_ISLAND_FULL.equals(style.id)) return "灵动岛";
+        if (OverlayUiStyles.NEW.equals(style.id)) return "新 UI（测试）";
+        return style.displayName;
+    }
+
+    private String overlayStyleDisplayName(String style) {
+        String normalized = OverlayUiStyles.normalize(style);
+        if (OverlayUiStyles.isPluginStyle(normalized)) {
+            String pluginId = OverlayUiStyles.pluginIdFromStyle(normalized);
+            PluginManifest plugin = installedPluginById(pluginId);
+            if (plugin != null && plugin.hasCapability(PluginManifest.CAP_OVERLAY_STYLE)) {
+                return plugin.name + "（插件）";
+            }
+            return "插件样式（不可用：" + pluginId + "）";
+        }
+        return OverlayUiStyles.displayName(normalized);
+    }
+
+    private PluginManifest installedPluginById(String pluginId) {
+        if (TextUtils.isEmpty(pluginId)) {
+            return null;
+        }
+        for (PluginManifest plugin : PluginManager.installedPlugins(this)) {
+            if (pluginId.equals(plugin.id)) {
+                return plugin;
+            }
+        }
+        return null;
+    }
+
+    private boolean isPluginOverlayStyleSelected(String pluginId) {
+        String selectedStyle = AppPrefs.getOverlayUiStyle(this);
+        return OverlayUiStyles.isPluginStyle(selectedStyle)
+                && pluginId.equals(OverlayUiStyles.pluginIdFromStyle(selectedStyle));
+    }
+
+    private void chooseTextMode() {
+        String[] labels = {
+                "\u81ea\u52a8\u6a21\u5f0f\uff08\u6839\u636e\u80cc\u666f\u900f\u660e\u5ea6\u81ea\u52a8\u66f4\u6539\u6587\u5b57\u989c\u8272\uff09",
+                "\u6d45\u8272\u6a21\u5f0f\uff08\u59cb\u7ec8\u4f7f\u7528\u6d45\u8272\u6587\u5b57\uff09"
+        };
+        int checked = AppPrefs.isAutoTextMode(this) ? 0 : 1;
+        new AlertDialog.Builder(this)
+                .setTitle("\u9009\u62e9\u6587\u5b57\u6a21\u5f0f")
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    saveOverlayTextMode(which == 0 ? AppPrefs.TEXT_MODE_AUTO : AppPrefs.TEXT_MODE_LIGHT);
+                    applyOverlayPreviewStyle();
+                    notifyOverlayStyleChanged();
+                    dialog.dismiss();
+                })
+                .setNegativeButton("\u53d6\u6d88", null)
+                .show();
+    }
+
+    private void saveOverlayTextMode(String mode) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(AppPrefs.KEY_TEXT_MODE, AppPrefs.TEXT_MODE_AUTO.equals(mode) ? AppPrefs.TEXT_MODE_AUTO : AppPrefs.TEXT_MODE_LIGHT)
+                .putBoolean(AppPrefs.KEY_CUSTOM_TEXT_COLOR_ENABLED, false)
+                .apply();
+        updateTextColorText(false);
+    }
+
+    private void saveTextColor(int color) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(AppPrefs.KEY_CUSTOM_TEXT_COLOR_ENABLED, true)
+                .putInt(AppPrefs.KEY_TEXT_COLOR, AppPrefs.normalizeBackgroundColor(color))
+                .apply();
+    }
+
+    private void saveOverlayUiStyle(String style) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(AppPrefs.KEY_OVERLAY_UI_STYLE, OverlayUiStyles.normalize(style))
+                .apply();
+        if (overlayStyleChoicesContainer != null) {
+            refreshStyleChoices(overlayStyleChoicesContainer);
+        }
+    }
+
+    private int previewPrimaryTextColor() {
+        if (AppPrefs.isCustomTextColorEnabled(this)) {
+            return AppPrefs.getTextColor(this);
+        }
+        return AppPrefs.usesDarkTextPalette(this) ? 0xFF0F172A : 0xFFE8EAED;
+    }
+
+    private int previewAlertTextColor() {
+        if (AppPrefs.isCustomTextColorEnabled(this)) {
+            return AppPrefs.getTextColor(this);
+        }
+        return AppPrefs.usesDarkTextPalette(this) ? 0xFF7C2D12 : 0xFFFFF7ED;
+    }
+
+    private int previewDetailTextColor() {
+        if (AppPrefs.isCustomTextColorEnabled(this)) {
+            return AppPrefs.getTextColor(this);
+        }
+        return AppPrefs.usesDarkTextPalette(this) ? 0xFF1E3A8A : 0xFFC7D2FE;
+    }
+
+    private void updateTextColorText(boolean customEnabled) {
+        if (overlayTextColorText != null) {
+            overlayTextColorText.setText(customEnabled ? "\u6587\u5b57\u989c\u8272\uff1a\u81ea\u5b9a\u4e49" : "\u6587\u5b57\u989c\u8272\uff1a\u8ddf\u968f\u6587\u5b57\u6a21\u5f0f");
+        }
+    }
+
+    private void updateBackgroundOpacityText(int percent) {
+        if (overlayBackgroundOpacityText != null) {
+            overlayBackgroundOpacityText.setText("\u4e3b\u80cc\u666f\u900f\u660e\u5ea6 " + AppPrefs.clampBackgroundOpacityPercent(percent) + "%");
+        }
+    }
+
+    private void saveBackgroundOpacityPercent(int percent) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(AppPrefs.KEY_BACKGROUND_OPACITY_PERCENT, AppPrefs.clampBackgroundOpacityPercent(percent))
+                .apply();
+    }
+
+    private void migrateOverlayStylePrefs() {
+        SharedPreferences prefs = getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE);
+        if (prefs.contains(AppPrefs.KEY_BACKGROUND_OPACITY_PERCENT)) {
+            return;
+        }
+        int opacity = prefs.getBoolean(AppPrefs.KEY_TRANSPARENT_BACKGROUND, false)
+                ? AppPrefs.MIN_BACKGROUND_OPACITY_PERCENT
+                : AppPrefs.DEFAULT_BACKGROUND_OPACITY_PERCENT;
+        prefs.edit().putInt(AppPrefs.KEY_BACKGROUND_OPACITY_PERCENT, opacity).apply();
+    }
+
+    private void setPreviewVisibility(android.view.View view, boolean visible) {
+        if (view != null) {
+            view.setVisibility(visible ? android.view.View.VISIBLE : android.view.View.GONE);
+        }
+    }
+
+    private void notifyOverlayScaleChanged() {
+        startOverlayService();
+        Intent intent = new Intent(AppPrefs.ACTION_OVERLAY_SCALE_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    private void saveMainOverlayEnabled(boolean enabled) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(AppPrefs.KEY_MAIN_OVERLAY_ENABLED, enabled)
+                .apply();
+    }
+
+    private void saveClusterMirrorEnabled(boolean enabled) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(AppPrefs.KEY_CLUSTER_MIRROR_ENABLED, enabled)
+                .apply();
+    }
+
+    private void notifyMainOverlayChanged() {
+        Intent intent = new Intent(AppPrefs.ACTION_MAIN_OVERLAY_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    private void notifyClusterMirrorChanged() {
+        Intent intent = new Intent(AppPrefs.ACTION_CLUSTER_MIRROR_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    private void notifyClusterPositionChanged() {
+        Intent intent = new Intent(AppPrefs.ACTION_CLUSTER_POSITION_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    private void notifyOverlayContentChanged() {
+        Intent intent = new Intent(AppPrefs.ACTION_OVERLAY_CONTENT_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    private void notifyOverlayStyleChanged() {
+        Intent intent = new Intent(AppPrefs.ACTION_OVERLAY_STYLE_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    private void notifyPluginsChanged() {
+        startOverlayService(this);
+        Intent intent = new Intent(AppPrefs.ACTION_PLUGINS_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    private void notifyDisplayPolicyChanged() {
+        Intent intent = new Intent(AppPrefs.ACTION_DISPLAY_POLICY_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    private void stopServiceIfNoVisuals() {
+        if (!AppPrefs.isMainOverlayEnabled(this)
+                && !AppPrefs.isClusterMirrorEnabled(this)
+                && !AppPrefs.isAutoStartEnabled(this)
+                && !AppPrefs.isShowMainWhenTargetForegroundEnabled(this)) {
+            stopService(new Intent(this, OverlayService.class));
+        }
+    }
+
+    private void saveClusterScalePercent(int percent) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(AppPrefs.KEY_CLUSTER_SCALE_PERCENT, AppPrefs.clampOverlayScalePercent(percent))
+                .apply();
+    }
+
+    private void updateClusterScaleText(int percent) {
+        if (clusterScaleText != null) {
+            clusterScaleText.setText("\u526f\u5c4f\u60ac\u6d6e\u7a97\u5927\u5c0f " + AppPrefs.clampOverlayScalePercent(percent) + "%");
+        }
+    }
+
+    private void updateClusterDisplayText() {
+        if (clusterDisplayText == null) {
+            return;
+        }
+        int selectedId = AppPrefs.getClusterDisplayId(this);
+        if (selectedId < 0) {
+            clusterDisplayText.setText("\u6295\u5c4f\u5c4f\u5e55 \u00b7 \u81ea\u52a8\u9009\u62e9");
+            return;
+        }
+        DisplayChoice selected = null;
+        ArrayList<DisplayChoice> choices = getClusterDisplayChoices();
+        for (DisplayChoice choice : choices) {
+            if (choice.displayId == selectedId) {
+                selected = choice;
+                break;
+            }
+        }
+        if (selected != null) {
+            clusterDisplayText.setText("\u6295\u5c4f\u5c4f\u5e55 \u00b7 " + selected.label + " (ID " + selected.displayId + ")");
+        } else {
+            clusterDisplayText.setText("\u6295\u5c4f\u5c4f\u5e55 \u00b7 \u5df2\u6307\u5b9a ID " + selectedId + "\uff08\u5f53\u524d\u672a\u68c0\u6d4b\u5230\uff09");
+        }
+    }
+
+    private void saveClusterDisplayId(int displayId) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(AppPrefs.KEY_CLUSTER_DISPLAY_ID, displayId)
+                .apply();
+    }
+
+    private ArrayList<DisplayChoice> getClusterDisplayChoices() {
+        ArrayList<DisplayChoice> choices = new ArrayList<>();
+        DisplayManager manager = (DisplayManager) getSystemService(DISPLAY_SERVICE);
+        if (manager == null) {
+            return choices;
+        }
+        Display[] displays = manager.getDisplays();
+        for (Display display : displays) {
+            if (display == null || display.getDisplayId() == Display.DEFAULT_DISPLAY) {
+                continue;
+            }
+            String name = display.getName();
+            if (TextUtils.isEmpty(name)) {
+                name = "\u526f\u5c4f";
+            }
+            choices.add(new DisplayChoice(display.getDisplayId(), name));
+        }
+        Collections.sort(choices, Comparator.comparingInt(choice -> choice.displayId));
+        return choices;
+    }
+
+    private void moveClusterBy(int dx, int dy) {
+        SharedPreferences prefs = getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE);
+        int x = Math.max(0, prefs.getInt(AppPrefs.KEY_CLUSTER_X, dp(24)) + dx);
+        int y = Math.max(0, prefs.getInt(AppPrefs.KEY_CLUSTER_Y, dp(120)) + dy);
+        boolean saved = prefs.edit()
+                .putInt(AppPrefs.KEY_CLUSTER_X, x)
+                .putInt(AppPrefs.KEY_CLUSTER_Y, y)
+                .commit();
+        startOverlayService();
+        if (saved) {
+            notifyClusterPositionChanged();
+        } else {
+            notifyClusterMirrorChanged();
+        }
+    }
+
+    private int dp(int value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private final class PluginMarketAdapter extends BaseAdapter {
+        private final ArrayList<PluginRepository.MarketPlugin> plugins;
+
+        PluginMarketAdapter(ArrayList<PluginRepository.MarketPlugin> plugins) {
+            this.plugins = plugins;
+        }
+
+        @Override
+        public int getCount() {
+            return plugins.size();
+        }
+
+        @Override
+        public Object getItem(int position) {
+            return plugins.get(position);
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return position;
+        }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            PluginRepository.MarketPlugin plugin = plugins.get(position);
+            LinearLayout root = new LinearLayout(MainActivity.this);
+            root.setOrientation(LinearLayout.VERTICAL);
+            root.setPadding(dp(18), dp(12), dp(18), dp(12));
+
+            TextView title = new TextView(MainActivity.this);
+            title.setText(plugin.name + "  " + plugin.versionName);
+            title.setTextSize(16f);
+            title.setTypeface(Typeface.DEFAULT_BOLD);
+            title.setTextColor(0xFF111827);
+            title.setSingleLine(true);
+            title.setEllipsize(TextUtils.TruncateAt.END);
+            root.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+            TextView meta = new TextView(MainActivity.this);
+            String developer = TextUtils.isEmpty(plugin.developerName) ? "未知开发者" : plugin.developerName;
+            meta.setText(developer + " · " + plugin.capabilitiesLabel + " · " + formatBytes(plugin.size));
+            meta.setTextSize(12f);
+            meta.setTextColor(0xFF64748B);
+            LinearLayout.LayoutParams metaLp = new LinearLayout.LayoutParams(-1, -2);
+            metaLp.setMargins(0, dp(4), 0, 0);
+            root.addView(meta, metaLp);
+
+            if (!TextUtils.isEmpty(plugin.description)) {
+                TextView desc = new TextView(MainActivity.this);
+                desc.setText(plugin.description);
+                desc.setTextSize(13f);
+                desc.setTextColor(0xFF334155);
+                desc.setMaxLines(2);
+                desc.setEllipsize(TextUtils.TruncateAt.END);
+                LinearLayout.LayoutParams descLp = new LinearLayout.LayoutParams(-1, -2);
+                descLp.setMargins(0, dp(6), 0, 0);
+                root.addView(desc, descLp);
+            }
+            FontManager.applyToViewTree(MainActivity.this, root);
+            return root;
+        }
+    }
+
+    private final class TargetAppAdapter extends BaseAdapter {
+        private final ArrayList<AppChoice> choices;
+        private final HashMap<String, Drawable> iconCache = new HashMap<>();
+
+        TargetAppAdapter(ArrayList<AppChoice> choices) {
+            this.choices = choices;
+        }
+
+        @Override
+        public int getCount() {
+            return choices.size();
+        }
+
+        @Override
+        public Object getItem(int position) {
+            return choices.get(position);
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return position;
+        }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            AppChoice choice = choices.get(position);
+            LinearLayout root = new LinearLayout(MainActivity.this);
+            root.setOrientation(LinearLayout.HORIZONTAL);
+            root.setGravity(Gravity.CENTER_VERTICAL);
+            root.setPadding(dp(18), dp(12), dp(18), dp(12));
+
+            ImageView icon = new ImageView(MainActivity.this);
+            icon.setImageDrawable(loadAppIcon(choice.packageName));
+            icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+            LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(46), dp(46));
+            iconLp.setMargins(0, 0, dp(14), 0);
+            root.addView(icon, iconLp);
+
+            LinearLayout content = new LinearLayout(MainActivity.this);
+            content.setOrientation(LinearLayout.VERTICAL);
+            root.addView(content, new LinearLayout.LayoutParams(0, -2, 1f));
+
+            TextView title = new TextView(MainActivity.this);
+            title.setText(choice.label);
+            title.setTextSize(16);
+            title.setTypeface(Typeface.DEFAULT_BOLD);
+            title.setTextColor(0xFF111827);
+            title.setSingleLine(true);
+            title.setEllipsize(TextUtils.TruncateAt.END);
+            content.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+            TextView packageView = new TextView(MainActivity.this);
+            packageView.setText(choice.packageName);
+            packageView.setTextSize(12);
+            packageView.setTextColor(0xFF6B7280);
+            packageView.setSingleLine(true);
+            packageView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+            LinearLayout.LayoutParams pkgLp = new LinearLayout.LayoutParams(-1, -2);
+            pkgLp.setMargins(0, dp(4), 0, 0);
+            content.addView(packageView, pkgLp);
+
+            LinearLayout tags = new LinearLayout(MainActivity.this);
+            tags.setOrientation(LinearLayout.HORIZONTAL);
+            LinearLayout.LayoutParams tagsLp = new LinearLayout.LayoutParams(-1, -2);
+            tagsLp.setMargins(0, dp(8), 0, 0);
+            content.addView(tags, tagsLp);
+
+            tags.addView(appTag(choice.amapPackage ? "\u9ad8\u5fb7\u5305\u540d" : (choice.mapNamed ? "\u5730\u56fe\u5339\u914d" : "\u5168\u90e8\u5217\u8868"),
+                    choice.amapPackage ? 0xFFEFF6FF : (choice.mapNamed ? 0xFFECFDF5 : 0xFFF3F4F6),
+                    choice.amapPackage ? 0xFF1D4ED8 : (choice.mapNamed ? 0xFF047857 : 0xFF4B5563)));
+            tags.addView(appTag(choice.system ? "\u7cfb\u7edf\u5e94\u7528" : "\u7528\u6237\u5e94\u7528",
+                    choice.system ? 0xFFFFF7ED : 0xFFEFF6FF,
+                    choice.system ? 0xFFC2410C : 0xFF1D4ED8));
+            tags.addView(appTag(choice.launchable ? "\u53ef\u6253\u5f00" : "\u65e0\u684c\u9762\u56fe\u6807",
+                    choice.launchable ? 0xFFF0FDFA : 0xFFFEF2F2,
+                    choice.launchable ? 0xFF0F766E : 0xFFB91C1C));
+            FontManager.applyToViewTree(MainActivity.this, root);
+            return root;
+        }
+
+        private Drawable loadAppIcon(String packageName) {
+            Drawable cached = iconCache.get(packageName);
+            if (cached != null) {
+                return cached;
+            }
+            try {
+                Drawable icon = getPackageManager().getApplicationIcon(packageName);
+                iconCache.put(packageName, icon);
+                return icon;
+            } catch (Exception ignored) {
+                return getResources().getDrawable(android.R.drawable.sym_def_app_icon);
+            }
+        }
+
+        private TextView appTag(String text, int backgroundColor, int textColor) {
+            TextView tag = new TextView(MainActivity.this);
+            tag.setText(text);
+            tag.setTextSize(11);
+            tag.setTextColor(textColor);
+            tag.setTypeface(Typeface.DEFAULT_BOLD);
+            tag.setPadding(dp(8), dp(3), dp(8), dp(3));
+            GradientDrawable background = new GradientDrawable();
+            background.setColor(backgroundColor);
+            background.setCornerRadius(dp(999));
+            tag.setBackground(background);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+            lp.setMargins(0, 0, dp(6), 0);
+            tag.setLayoutParams(lp);
+            return tag;
+        }
+    }
+
+    private static final class OverlayStyleChoice {
+        final String id;
+        final String label;
+
+        OverlayStyleChoice(String id, String label) {
+            this.id = id;
+            this.label = label;
+        }
+    }
+
+    private static final class AppChoice {
+        final String label;
+        final String packageName;
+        final boolean system;
+        final boolean launchable;
+        final boolean mapNamed;
+        final boolean amapPackage;
+
+        AppChoice(String label, String packageName, boolean system, boolean launchable, boolean mapNamed, boolean amapPackage) {
+            this.label = label;
+            this.packageName = packageName;
+            this.system = system;
+            this.launchable = launchable;
+            this.mapNamed = mapNamed;
+            this.amapPackage = amapPackage;
+        }
+    }
+
+    private static final class DisplayChoice {
+        final int displayId;
+        final String label;
+
+        DisplayChoice(int displayId, String label) {
+            this.displayId = displayId;
+            this.label = label;
+        }
+    }
+}
