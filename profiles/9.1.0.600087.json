@@ -1,0 +1,38 @@
+{
+  "id": "amap-auto-9.1.0.600087-cruise-lights",
+  "versionName": "9.1.0.600087",
+  "packageName": "com.autonavi.amapClone",
+  "inputSha256": "ACEB25EBA296FBFCC78B103BD3360A9026FB89AFC50FE07FB1C6E0D214342512",
+  "outputName": "高德地图_9.1.0.600087_amap_auto_patch_signed.apk",
+  "minApi": 23,
+  "applicationPatch": {
+    "file": "smali/com/autonavi/amapauto/app/MapApplicationProxy.smali",
+    "after": "    invoke-super {p0}, Landroid/app/Application;->onCreate()V",
+    "insert": [
+      "",
+      "    invoke-static {p0}, Lamap/auto/patch/PatchRuntime;->init(Landroid/content/Context;)V"
+    ]
+  },
+  "hostFloatWindowPatch": {
+    "file": "smali/vh0.smali",
+    "find": "    invoke-interface {p1, p2, v0}, Landroid/view/WindowManager;->addView(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V",
+    "replace": "    invoke-static {p1, p2, v0}, Lamap/auto/patch/PatchRuntime;->replaceHostFloatWindow(Landroid/view/WindowManager;Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V"
+  },
+  "trafficLightPatch": {
+    "file": "smali/com/autonavi/amapauto/CameraLightInfo/CameraLightInteract.smali",
+    "after": "    invoke-static {p0}, Lfloatapp/trafficlight/CruiseTrafficLightVoice;->setCameraLightInfoWrapper(Lcom/autonavi/amapauto/CameraLightInfo/CameraLightInfoWrapper;)V",
+    "insert": [
+      "",
+      "    invoke-static {p0}, Lamap/auto/patch/PatchRuntime;->onTrafficLightWrapper(Ljava/lang/Object;)V"
+    ]
+  },
+  "hostFloatWindowCleanupPatch": {
+    "file": "smali/vh0.smali",
+    "scope": ".method public declared-synchronized d()V",
+    "after": "    monitor-enter p0",
+    "insert": [
+      "",
+      "    invoke-static {}, Lamap/auto/patch/PatchRuntime;->removePatchOverlay()V"
+    ]
+  }
+}
