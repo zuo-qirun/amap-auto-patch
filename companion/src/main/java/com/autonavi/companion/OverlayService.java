@@ -2171,16 +2171,11 @@ public class OverlayService extends Service {
 
     private void refreshDisplayPolicies() {
         boolean foregroundChanged = false;
-        if (AppPrefs.isHideMainWhenTargetForegroundEnabled(this)) {
-            boolean foreground = targetForegroundStateKnownFromBroadcast
-                    ? targetAppForegroundFromBroadcast
-                    : isTargetAppForeground();
-            foregroundChanged = targetAppForeground != foreground;
-            targetAppForeground = foreground;
-        } else if (targetAppForeground) {
-            targetAppForeground = false;
-            foregroundChanged = true;
-        }
+        boolean foreground = targetForegroundStateKnownFromBroadcast
+                ? targetAppForegroundFromBroadcast
+                : isTargetAppForeground();
+        foregroundChanged = targetAppForeground != foreground;
+        targetAppForeground = foreground;
 
         boolean targetBroadcastChanged = expireTargetBroadcastActivityIfNeeded();
         boolean navigationChanged = expireNavigationActivityIfNeeded();
@@ -2203,7 +2198,9 @@ public class OverlayService extends Service {
     }
 
     private boolean shouldShowMainOverlayForTargetBroadcast() {
-        return AppPrefs.isShowMainWhenTargetForegroundEnabled(this) && targetBroadcastActive;
+        return AppPrefs.isShowMainWhenTargetForegroundEnabled(this)
+                && targetBroadcastActive
+                && (AppPrefs.isKeepOverlayVisibleEnabled(this) || !targetAppForeground);
     }
 
     private boolean shouldHideClusterMirrorForInactiveNavigation() {
@@ -2243,10 +2240,8 @@ public class OverlayService extends Service {
                 || targetAppForegroundFromBroadcast != foreground;
         targetForegroundStateKnownFromBroadcast = true;
         targetAppForegroundFromBroadcast = foreground;
-        if (AppPrefs.isHideMainWhenTargetForegroundEnabled(this)) {
-            changed = changed || targetAppForeground != foreground;
-            targetAppForeground = foreground;
-        }
+        changed = changed || targetAppForeground != foreground;
+        targetAppForeground = foreground;
         Log.d(TAG, "target foreground state from AMap broadcast: " + foreground);
         return changed;
     }
@@ -3191,8 +3186,8 @@ public class OverlayService extends Service {
         }
         updateOverspeedWarning();
         refreshPluginRenderers();
+        syncMainOverlayAttachment();
         if (displayPolicyChanged) {
-            syncMainOverlayAttachment();
             ensureClusterMirror();
         }
     }

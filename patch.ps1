@@ -374,7 +374,7 @@ function Inject-CompanionManifest($decodedDir) {
     if (!$text.Contains('com.autonavi.companion.MainActivity')) {
         $components = @'
         <activity android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode" android:exported="false" android:name="com.autonavi.companion.DiagnosticActivity" android:theme="@style/AppTheme"/>
-        <activity android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode" android:exported="true" android:label="AMap Companion" android:launchMode="singleTop" android:name="com.autonavi.companion.MainActivity" android:theme="@style/AppTheme">
+        <activity android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode" android:exported="true" android:label="AMap Companion" android:launchMode="singleTask" android:name="com.autonavi.companion.MainActivity" android:taskAffinity="com.autonavi.companion.task" android:theme="@style/AppTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -391,6 +391,19 @@ function Inject-CompanionManifest($decodedDir) {
         </receiver>
 '@
         $text = $text -replace '(<application\b[^>]*>)', "`$1`r`n$components"
+    }
+    $hasUsbFill = $text -match 'android:name="com\.autonavi\.auto\.remote\.fill\.UsbFillActivity"'
+    $hasUsbLauncher = $text -match '(?s)<activity\b[^>]*android:name="com\.autonavi\.auto\.remote\.fill\.UsbFillActivity"[^>]*>.*?<category android:name="android\.intent\.category\.LAUNCHER"/>'
+    if ($hasUsbFill -and -not $hasUsbLauncher) {
+        $launcherFilter = @'
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.LAUNCHER"/>
+            <category android:name="android.intent.category.APP_MAPS"/>
+            <category android:name="android.intent.category.DEFAULT"/>
+        </intent-filter>
+'@
+        $text = $text -replace '(<activity\b[^>]*android:name="com\.autonavi\.auto\.remote\.fill\.UsbFillActivity"[^>]*>)', "`$1`r`n$launcherFilter"
     }
     Write-Text $manifestPath $text
     Write-Host "[patch] injected companion manifest entries"

@@ -2,7 +2,7 @@
   "id": "amap-auto-9.1.0.600087-cruise-lights",
   "versionName": "9.1.0.600087",
   "packageName": "com.autonavi.amapClone",
-  "inputSha256": "ACEB25EBA296FBFCC78B103BD3360A9026FB89AFC50FE07FB1C6E0D214342512",
+  "inputSha256": "BC7DE98D4D2BC85D88C055BF4E810A470B001A77D18868BCE024A11A8BCAB30B",
   "outputName": "高德地图_9.1.0.600087_amap_auto_patch_signed.apk",
   "minApi": 23,
   "applicationPatch": {
@@ -20,7 +20,8 @@
   },
   "trafficLightPatch": {
     "file": "smali/com/autonavi/amapauto/CameraLightInfo/CameraLightInteract.smali",
-    "after": "    invoke-static {p0}, Lfloatapp/trafficlight/CruiseTrafficLightVoice;->setCameraLightInfoWrapper(Lcom/autonavi/amapauto/CameraLightInfo/CameraLightInfoWrapper;)V",
+    "scope": ".method public static notifyCameraLightInfosImpl(Lcom/autonavi/amapauto/CameraLightInfo/CameraLightInfoWrapper;)V",
+    "after": "    .locals 8",
     "insert": [
       "",
       "    invoke-static {p0}, Lamap/auto/patch/PatchRuntime;->onTrafficLightWrapper(Ljava/lang/Object;)V"

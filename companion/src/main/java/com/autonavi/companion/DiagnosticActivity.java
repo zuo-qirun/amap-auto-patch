@@ -103,7 +103,7 @@ public class DiagnosticActivity extends Activity {
         root.addView(actions, actionsLp);
         addButtonPair(actions,
                 button("刷新", v -> refreshAll(), 0xFF2563EB),
-                button("启动服务", v -> startCompanionService(), 0xFF0F766E));
+                button("打开目标应用", v -> openTargetApp(), 0xFF111827));
         addButtonPair(actions,
                 button("导出诊断包", v -> confirmExport(), 0xFF4F46E5),
                 button("导入诊断包", v -> openImportPicker(), 0xFF7C3AED));
@@ -246,7 +246,7 @@ public class DiagnosticActivity extends Activity {
             return;
         }
         if (DiagnosticChecks.ID_SERVICE.equals(item.id)) {
-            startCompanionService();
+            openMainSettings();
             return;
         }
         if (DiagnosticChecks.ID_LOG_DIR.equals(item.id)) {
@@ -311,7 +311,7 @@ public class DiagnosticActivity extends Activity {
     }
 
     private boolean openTargetApp() {
-        Intent launch = getPackageManager().getLaunchIntentForPackage(AppPrefs.getTargetPackage(this));
+        Intent launch = AppPrefs.targetLaunchIntent(this);
         if (launch == null) {
             Toast.makeText(this, "无法打开目标应用，请回首页检查包名", Toast.LENGTH_LONG).show();
             return false;

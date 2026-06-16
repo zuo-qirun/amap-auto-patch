@@ -48,7 +48,7 @@ amap_auto_patch/tools/apktool.jar
 
 ```powershell
 cd D:\Github\红绿灯\amap_auto_patch
-.\patch.ps1 -InputApk "D:\Github\红绿灯\高德地图_9.1.0.600087 (巡航红绿灯).apk"
+.\patch.ps1 -InputApk "D:\Github\红绿灯\(✓)Auto_9.1.0.600087_(Clone红绿灯).apk"
 ```
 
 ## 当前悬浮窗行为

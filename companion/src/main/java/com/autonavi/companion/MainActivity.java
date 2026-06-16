@@ -127,10 +127,12 @@ public class MainActivity extends Activity {
     }
 
     private void autoStartServiceOnAppOpen() {
-        if (!AppPrefs.isStartServiceOnAppOpenEnabled(this)) {
+        if (!AppPrefs.isKeepOverlayVisibleEnabled(this)
+                && !AppPrefs.isShowMainWhenTargetForegroundEnabled(this)
+                && !AppPrefs.isAutoStartEnabled(this)) {
             return;
         }
-        targetText.postDelayed(() -> startCompanionService(false), 350L);
+        targetText.postDelayed(this::startOverlayService, 350L);
     }
 
     private ScrollView buildContent() {
@@ -222,23 +224,16 @@ public class MainActivity extends Activity {
                     button("\u76ee\u6807\u5df2\u9501\u5b9a", v -> showLockedTargetInfo(), 0xFF2563EB),
                     button("\u6388\u6743\u60ac\u6d6e\u7a97", v -> requestOverlayPermission(), 0xFF475569));
             addButtonPair(parent,
-                    button("\u542f\u52a8\u4f34\u4fa3\u670d\u52a1", v -> startCompanionService(), 0xFF0F766E),
-                    button("\u5173\u95ed\u4f34\u4fa3\u670d\u52a1", v -> stopCompanionService(), 0xFFB45309));
-            addButtonPair(parent,
                     button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827),
-                    button("\u8bca\u65ad\u4e2d\u5fc3", v -> openDiagnosticCenter(), 0xFF0F172A));
-            addButtonPair(parent,
-                    button("\u96c6\u6210\u7248\u8bf4\u660e", v -> showIntegratedBuildInfo(), 0xFF334155),
-                    button("\u8bca\u65ad\u4e2d\u5fc3", v -> openDiagnosticCenter(), 0xFF0F172A));
+                    button("\u96c6\u6210\u7248\u8bf4\u660e", v -> showIntegratedBuildInfo(), 0xFF334155));
             addButtonPair(parent,
                     button("\u63d2\u4ef6\u5e02\u573a / \u672c\u5730\u63d2\u4ef6", v -> showPluginHubDialog(), 0xFF7C3AED),
-                    button("\u67e5\u770b/\u4fdd\u5b58\u65e5\u5fd7", v -> showLogcatDialog(), 0xFF4F46E5));
+                    button("\u8bca\u65ad\u4e2d\u5fc3", v -> openDiagnosticCenter(), 0xFF0F172A));
+            parent.addView(button("\u67e5\u770b/\u4fdd\u5b58\u65e5\u5fd7", v -> showLogcatDialog(), 0xFF4F46E5));
             return;
         }
         parent.addView(button("\u76ee\u6807\u5df2\u9501\u5b9a", v -> showLockedTargetInfo(), 0xFF2563EB));
         parent.addView(button("\u6388\u6743\u60ac\u6d6e\u7a97", v -> requestOverlayPermission(), 0xFF475569));
-        parent.addView(button("\u542f\u52a8\u4f34\u4fa3\u670d\u52a1", v -> startCompanionService(), 0xFF0F766E));
-        parent.addView(button("\u5173\u95ed\u4f34\u4fa3\u670d\u52a1", v -> stopCompanionService(), 0xFFB45309));
         parent.addView(button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827));
         parent.addView(button("\u96c6\u6210\u7248\u8bf4\u660e", v -> showIntegratedBuildInfo(), 0xFF334155));
         parent.addView(button("\u63d2\u4ef6\u5e02\u573a / \u672c\u5730\u63d2\u4ef6", v -> showPluginHubDialog(), 0xFF7C3AED));
@@ -604,7 +599,7 @@ public class MainActivity extends Activity {
         box.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         TextView hint = new TextView(this);
-        hint.setText("除“桌面启动时直接进入目标应用”外，这些选项不会主动启动目标高德应用。启用桌面直达后，首次点击桌面图标会打开目标应用；30秒内再次点击桌面图标可进入伴侣设置，轻触主屏悬浮窗也可进入。开机或亮屏自动启动服务开启后，系统重启、应用更新或车机亮屏时会恢复伴侣服务。");
+        hint.setText("“悬浮窗持续显示”开启后，主屏悬浮窗在高德前台和后台都会保持显示；关闭后，进入高德前台时隐藏主屏悬浮窗，返回后台时再显示。启用桌面直达后，首次点击伴侣桌面图标会打开高德；30秒内再次点击可进入伴侣设置。");
         hint.setTextSize(12f);
         hint.setTextColor(0xFF64748B);
         LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
@@ -620,19 +615,14 @@ public class MainActivity extends Activity {
         if (isWideLayout()) {
             addTogglePair(grid,
                     behaviorToggle("开机或亮屏自动启动服务", AppPrefs.KEY_AUTO_START_ENABLED),
-                    behaviorToggle("进入软件后自动启动服务", AppPrefs.KEY_START_SERVICE_ON_APP_OPEN));
+                    behaviorToggle("桌面启动时直接进入目标应用", AppPrefs.KEY_LAUNCH_TARGET_FROM_DESKTOP));
             addTogglePair(grid,
-                    behaviorToggle("桌面启动时直接进入目标应用", AppPrefs.KEY_LAUNCH_TARGET_FROM_DESKTOP),
-                    behaviorToggle("高德广播自动显示悬浮窗", AppPrefs.KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND));
-            addTogglePair(grid,
-                    behaviorToggle("高德前台隐藏中控悬浮窗", AppPrefs.KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND),
+                    behaviorToggle("悬浮窗持续显示", AppPrefs.KEY_KEEP_OVERLAY_VISIBLE),
                     behaviorToggle("导航/巡航退出隐藏仪表", AppPrefs.KEY_HIDE_CLUSTER_WHEN_INACTIVE));
         } else {
             grid.addView(behaviorToggle("开机或亮屏自动启动服务", AppPrefs.KEY_AUTO_START_ENABLED));
-            grid.addView(behaviorToggle("进入软件后自动启动服务", AppPrefs.KEY_START_SERVICE_ON_APP_OPEN));
             grid.addView(behaviorToggle("桌面启动时直接进入目标应用", AppPrefs.KEY_LAUNCH_TARGET_FROM_DESKTOP));
-            grid.addView(behaviorToggle("高德广播自动显示悬浮窗", AppPrefs.KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND));
-            grid.addView(behaviorToggle("高德前台隐藏中控悬浮窗", AppPrefs.KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND));
+            grid.addView(behaviorToggle("悬浮窗持续显示", AppPrefs.KEY_KEEP_OVERLAY_VISIBLE));
             grid.addView(behaviorToggle("导航/巡航退出隐藏仪表", AppPrefs.KEY_HIDE_CLUSTER_WHEN_INACTIVE));
         }
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
@@ -1779,39 +1769,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void startCompanionService() {
-        startCompanionService(true);
-    }
-
-    private void startCompanionService(boolean showToast) {
-        if (!AppPrefs.isMainOverlayEnabled(this)
-                && !AppPrefs.isClusterMirrorEnabled(this)
-                && !AppPrefs.isShowMainWhenTargetForegroundEnabled(this)) {
-            if (showToast) {
-                Toast.makeText(this, "\u8bf7\u5148\u52fe\u9009\u4e3b\u5c4f\u60ac\u6d6e\u7a97\u3001\u526f\u5c4f\u60ac\u6d6e\u7a97\u6216\u9ad8\u5fb7\u5e7f\u64ad\u81ea\u52a8\u663e\u793a", Toast.LENGTH_LONG).show();
-            }
-            return;
-        }
-        startOverlayService();
-        notifyMainOverlayChanged();
-        notifyClusterMirrorChanged();
-        if (showToast) {
-            Toast.makeText(this, "\u5df2\u6309\u9009\u9879\u542f\u52a8\u4f34\u4fa3\u670d\u52a1", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void stopCompanionService() {
-        saveBehaviorEnabled(AppPrefs.KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND, false);
-        Intent stopIntent = new Intent(this, OverlayService.class);
-        stopIntent.setAction(OverlayService.ACTION_STOP_SERVICE);
-        try {
-            startService(stopIntent);
-        } catch (Throwable ignored) {
-            stopService(new Intent(this, OverlayService.class));
-        }
-        Toast.makeText(this, "\u5df2\u5173\u95ed\u4f34\u4fa3\u670d\u52a1", Toast.LENGTH_SHORT).show();
-    }
-
     private void requestOverlayPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
@@ -1821,7 +1778,7 @@ public class MainActivity extends Activity {
     }
 
     private void openTargetApp() {
-        Intent launch = getPackageManager().getLaunchIntentForPackage(AppPrefs.getTargetPackage(this));
+        Intent launch = AppPrefs.targetLaunchIntent(this);
         if (launch != null) {
             startActivity(launch);
         }
@@ -1845,7 +1802,7 @@ public class MainActivity extends Activity {
                 || !sourceIntent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
             return false;
         }
-        Intent launch = getPackageManager().getLaunchIntentForPackage(AppPrefs.getTargetPackage(this));
+        Intent launch = AppPrefs.targetLaunchIntent(this);
         if (launch == null) {
             clearPendingDesktopLaunch();
             return false;
@@ -2277,18 +2234,12 @@ public class MainActivity extends Activity {
         checkBox.setPadding(0, dp(2), 0, dp(2));
         checkBox.setOnCheckedChangeListener((CompoundButton buttonView, boolean isChecked) -> {
             saveBehaviorEnabled(key, isChecked);
-            if (AppPrefs.KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND.equals(key)
-                    && isChecked && !AppPrefs.hasUsageStatsAccess(this)) {
-                Toast.makeText(this,
-                        "将优先使用高德前后台广播；使用情况访问权限仅作为兼容回退",
-                        Toast.LENGTH_LONG).show();
+            if (AppPrefs.KEY_KEEP_OVERLAY_VISIBLE.equals(key)) {
+                saveBehaviorEnabled(AppPrefs.KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND, true);
+                saveBehaviorEnabled(AppPrefs.KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND, !isChecked);
             }
             if (isChecked) {
-                if (AppPrefs.KEY_START_SERVICE_ON_APP_OPEN.equals(key)) {
-                    startCompanionService(false);
-                } else {
-                    startOverlayService();
-                }
+                startOverlayService();
             }
             notifyDisplayPolicyChanged();
             if (!isChecked) {

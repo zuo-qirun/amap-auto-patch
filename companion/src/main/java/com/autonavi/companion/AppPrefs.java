@@ -1,8 +1,11 @@
 package com.autonavi.companion;
 
 import android.app.AppOpsManager;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Process;
 
@@ -51,6 +54,7 @@ public final class AppPrefs {
     public static final String KEY_AUTO_START_ENABLED           = "auto_start_enabled";
     public static final String KEY_START_SERVICE_ON_APP_OPEN    = "start_service_on_app_open";
     public static final String KEY_LAUNCH_TARGET_FROM_DESKTOP   = "launch_target_from_desktop";
+    public static final String KEY_KEEP_OVERLAY_VISIBLE         = "keep_overlay_visible";
     public static final String KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND  = "show_main_when_target_foreground";
     public static final String KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND  = "hide_main_when_target_foreground";
     public static final String KEY_HIDE_CLUSTER_WHEN_INACTIVE   = "hide_cluster_when_inactive";
@@ -75,6 +79,7 @@ public final class AppPrefs {
 
     // ── UI style values ──────────────────────────────────────────────────
     public static final String DEFAULT_TARGET_PACKAGE           = "com.autonavi.amapClone";
+    public static final String TARGET_ENTRY_ACTIVITY            = "com.autonavi.auto.remote.fill.UsbFillActivity";
     public static final String TEXT_MODE_LIGHT                  = "light";
     public static final String TEXT_MODE_AUTO                   = "auto";
     public static final String OVERLAY_UI_OLD                   = OverlayUiStyles.OLD;
@@ -137,12 +142,18 @@ public final class AppPrefs {
         return isBehaviorEnabled(context, KEY_LAUNCH_TARGET_FROM_DESKTOP);
     }
 
+    public static boolean isKeepOverlayVisibleEnabled(Context context) {
+        return isBehaviorEnabled(context, KEY_KEEP_OVERLAY_VISIBLE);
+    }
+
     public static boolean isHideMainWhenTargetForegroundEnabled(Context context) {
-        return isBehaviorEnabled(context, KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND);
+        return !isKeepOverlayVisibleEnabled(context)
+                && isBehaviorEnabled(context, KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND);
     }
 
     public static boolean isShowMainWhenTargetForegroundEnabled(Context context) {
-        return isBehaviorEnabled(context, KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND);
+        return isKeepOverlayVisibleEnabled(context)
+                || isBehaviorEnabled(context, KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND);
     }
 
     public static boolean isHideClusterWhenInactiveEnabled(Context context) {
@@ -347,5 +358,19 @@ public final class AppPrefs {
 
     public static String getTargetPackage(Context context) {
         return context.getPackageName();
+    }
+
+    public static Intent targetLaunchIntent(Context context) {
+        String targetPackage = getTargetPackage(context);
+        Intent explicit = Intent.makeRestartActivityTask(new ComponentName(targetPackage, TARGET_ENTRY_ACTIVITY));
+        explicit.addCategory(Intent.CATEGORY_LAUNCHER);
+        PackageManager pm = context.getPackageManager();
+        try {
+            if (pm != null && explicit.resolveActivity(pm) != null) {
+                return explicit;
+            }
+        } catch (Throwable ignored) {
+        }
+        return pm == null ? null : pm.getLaunchIntentForPackage(targetPackage);
     }
 }

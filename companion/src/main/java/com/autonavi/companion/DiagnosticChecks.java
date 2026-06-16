@@ -39,7 +39,7 @@ final class DiagnosticChecks {
                 overlayGranted ? "" : "打开授权页"));
 
         boolean targetInstalled = isPackageInstalled(pm, targetPackage);
-        Intent launch = pm.getLaunchIntentForPackage(targetPackage);
+        Intent launch = AppPrefs.targetLaunchIntent(context);
         items.add(new Item(ID_TARGET, "目标应用", targetInstalled && launch != null,
                 targetInstalled
                         ? (launch != null ? targetPackage + " 可打开。" : targetPackage + " 已安装，但没有桌面入口。")
@@ -66,9 +66,9 @@ final class DiagnosticChecks {
 
         boolean serviceRunning = isOverlayServiceRunning(context);
         items.add(new Item(ID_SERVICE, "伴侣服务", serviceRunning,
-                serviceRunning ? "OverlayService 正在运行。" : "服务未运行，可在诊断中心启动或回放时临时启动。",
-                "启动伴侣服务后才会持续监听高德广播、维护悬浮窗和诊断历史。",
-                serviceRunning ? "" : "启动服务"));
+                serviceRunning ? "OverlayService 正在运行。" : "服务未运行，开启悬浮窗持续显示或打开目标高德后会自动拉起。",
+                "服务会按显示策略自动启动，用于监听高德广播、维护悬浮窗和诊断历史。",
+                serviceRunning ? "" : "返回首页"));
 
         boolean hasVisualEntry = AppPrefs.isMainOverlayEnabled(context)
                 || AppPrefs.isClusterMirrorEnabled(context)
