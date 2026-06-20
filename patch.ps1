@@ -419,9 +419,12 @@ function Merge-RuntimeSmali($apktoolJar, $runtimeDex, $decodedDir, $workRoot) {
     java -jar $apktoolJar d -f -r -o $runtimeDecoded $runtimeApk
     Check-Last "apktool decode runtime dex"
 
-    foreach ($relative in @("amap", "com\autonavi\companion", "com\android\tools\r8\annotations")) {
+    $requiredSmali = @("amap", "com\autonavi\companion")
+    $optionalSmali = @("com\android\tools\r8\annotations")
+    foreach ($relative in ($requiredSmali + $optionalSmali)) {
         $runtimeSmali = Join-Path (Join-Path $runtimeDecoded "smali") $relative
         if (!(Test-Path -LiteralPath $runtimeSmali)) {
+            if ($optionalSmali -contains $relative) { continue }
             throw "Runtime smali not found after decode: $runtimeSmali"
         }
         $targetSmali = Join-Path (Join-Path $decodedDir "smali") $relative
